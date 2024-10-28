@@ -2,16 +2,27 @@ import Foundation
 import simd
 
 // MARK: - Data Structures
+// MARK: - Public Structures
 
 public struct DPoint: Hashable {
-    public let x: Double
-    public let y: Double
-    public let index: Int
+    @usableFromInline
+    let x: Double
     
-    public init(x: Double, y: Double, index: Int = 0) {
+    @usableFromInline
+    let y: Double
+    
+    @usableFromInline
+    let index: Int
+    
+    @usableFromInline
+    init(x: Double, y: Double, index: Int) {
         self.x = x
         self.y = y
         self.index = index
+    }
+    
+    public init(x: Double, y: Double) {
+        self.init(x: x, y: y, index: 0)
     }
 }
 
@@ -20,24 +31,37 @@ public struct DTriangle: Hashable {
     public let point2: DPoint
     public let point3: DPoint
     
-    public init(point1: DPoint, point2: DPoint, point3: DPoint) {
+    @usableFromInline
+    init(point1: DPoint, point2: DPoint, point3: DPoint) {
         self.point1 = point1
         self.point2 = point2
         self.point3 = point3
     }
 }
 
+// MARK: - Internal Structures
+
+@usableFromInline
 struct DCircumcircle: Hashable {
+    @usableFromInline
     let point1: DPoint
+    
+    @usableFromInline
     let point2: DPoint
+    
+    @usableFromInline
     let point3: DPoint
+    
+    @usableFromInline
     let x: Double
+    
+    @usableFromInline
     let y: Double
+    
+    @usableFromInline
     let rsqr: Double
     
-    // Pre-compute hash for better performance in Sets
-    private let precomputedHash: Int
-    
+    @usableFromInline
     init(point1: DPoint, point2: DPoint, point3: DPoint, x: Double, y: Double, rsqr: Double) {
         self.point1 = point1
         self.point2 = point2
@@ -45,26 +69,18 @@ struct DCircumcircle: Hashable {
         self.x = x
         self.y = y
         self.rsqr = rsqr
-        
-        // Pre-compute hash combining all values
-        var hasher = Hasher()
-        hasher.combine(x)
-        hasher.combine(y)
-        hasher.combine(point1.index)
-        hasher.combine(point2.index)
-        hasher.combine(point3.index)
-        self.precomputedHash = hasher.finalize()
-    }
-    
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(precomputedHash)
     }
 }
 
+@usableFromInline
 struct DEdge: Hashable {
+    @usableFromInline
     let point1: DPoint
+    
+    @usableFromInline
     let point2: DPoint
     
+    @inlinable
     init(point1: DPoint, point2: DPoint) {
         if point1.index <= point2.index {
             self.point1 = point1
@@ -76,13 +92,15 @@ struct DEdge: Hashable {
     }
 }
 
-// MARK: - Memory Management
+// MARK: - Context Management
 
-private final class TriangulationContext {
+@usableFromInline
+final class TriangulationContext {
     let points: UnsafeMutableBufferPointer<DPoint>
     var open: Set<DCircumcircle>
     var completed: Set<DCircumcircle>
     
+    @usableFromInline
     init(capacity: Int) {
         let allocatedPoints = UnsafeMutablePointer<DPoint>.allocate(capacity: capacity + 3)
         self.points = UnsafeMutableBufferPointer(start: allocatedPoints, count: capacity + 3)
@@ -95,10 +113,11 @@ private final class TriangulationContext {
     }
 }
 
+// MARK: - Geometric Calculations
 
-// MARK: - SIMD Optimized Geometric Calculations
-
-private func fastCircumcircle(_ i: DPoint, _ j: DPoint, _ k: DPoint) -> DCircumcircle {
+@usableFromInline
+@inline(__always)
+func fastCircumcircle(_ i: DPoint, _ j: DPoint, _ k: DPoint) -> DCircumcircle {
     let p1 = SIMD2<Double>(i.x, i.y)
     let p2 = SIMD2<Double>(j.x, j.y)
     let p3 = SIMD2<Double>(k.x, k.y)
@@ -129,86 +148,30 @@ private func fastCircumcircle(_ i: DPoint, _ j: DPoint, _ k: DPoint) -> DCircumc
                         x: center.x, y: center.y, rsqr: rsqr)
 }
 
-// MARK: - Optimized Sorting with Block-Based Quicksort
-
-private func blockQuicksort(_ points: UnsafeMutableBufferPointer<DPoint>, low: Int, high: Int) {
-    let blockSize = 64
-    var stack = [(low: Int, high: Int)](repeating: (0,0), count: 32)
-    var stackTop = 0
-    
-    stack[stackTop] = (low, high)
-    stackTop += 1
-    
-    while stackTop > 0 {
-        stackTop -= 1
-        let (left, right) = stack[stackTop]
-        
-        if right - left <= blockSize {
-            // Use insertion sort for small arrays
-            for i in (left + 1)...right {
-                let temp = points[i]
-                var j = i - 1
-                while j >= left && points[j].x > temp.x {
-                    points[j + 1] = points[j]
-                    j -= 1
-                }
-                points[j + 1] = temp
-            }
-            continue
-        }
-        
-        // Median-of-three pivot selection
-        let mid = left + (right - left) / 2
-        if points[left].x > points[mid].x { points.swapAt(left, mid) }
-        if points[left].x > points[right].x { points.swapAt(left, right) }
-        if points[mid].x > points[right].x { points.swapAt(mid, right) }
-        
-        let pivot = points[mid].x
-        var i = left
-        var j = right
-        
-        while i <= j {
-            while points[i].x < pivot { i += 1 }
-            while points[j].x > pivot { j -= 1 }
-            if i <= j {
-                points.swapAt(i, j)
-                i += 1
-                j -= 1
-            }
-        }
-        
-        if j - left > right - i {
-            if left < j {
-                stack[stackTop] = (left, j)
-                stackTop += 1
-            }
-            if i < right {
-                stack[stackTop] = (i, right)
-                stackTop += 1
-            }
-        } else {
-            if i < right {
-                stack[stackTop] = (i, right)
-                stackTop += 1
-            }
-            if left < j {
-                stack[stackTop] = (left, j)
-                stackTop += 1
-            }
-        }
-    }
+@inline(__always)
+private func isPointInCircumcircle(_ point: DPoint, _ circle: DCircumcircle) -> Bool {
+    let dx = point.x - circle.x
+    let dy = point.y - circle.y
+    return dx * dx + dy * dy - circle.rsqr <= Double.ulpOfOne
 }
 
-// MARK: - Parallel Point Processing
-
 @inline(__always)
-private func processPoint(context: TriangulationContext, currentPoint: DPoint) {
+private func processEdges(_ edges: inout [DEdge: Int], circle: DCircumcircle) {
+    edges[DEdge(point1: circle.point1, point2: circle.point2), default: 0] += 1
+    edges[DEdge(point1: circle.point2, point2: circle.point3), default: 0] += 1
+    edges[DEdge(point1: circle.point3, point2: circle.point1), default: 0] += 1
+}
+
+// MARK: - Point Processing
+
+@usableFromInline
+@inline(__always)
+func processPoint(context: TriangulationContext, currentPoint: DPoint) {
     var trianglesToRemove = Set<DCircumcircle>()
     var edges = [DEdge: Int]()
     trianglesToRemove.reserveCapacity(32)
     edges.reserveCapacity(32)
     
-    // First pass: identify triangles to remove and collect edges
     for circle in context.open {
         let dx = currentPoint.x - circle.x
         
@@ -218,24 +181,16 @@ private func processPoint(context: TriangulationContext, currentPoint: DPoint) {
             continue
         }
         
-        let dy = currentPoint.y - circle.y
-        if dx * dx + dy * dy - circle.rsqr <= Double.ulpOfOne {
+        if isPointInCircumcircle(currentPoint, circle) {
             trianglesToRemove.insert(circle)
-            
-            // Collect edges
-            edges[DEdge(point1: circle.point1, point2: circle.point2), default: 0] += 1
-            edges[DEdge(point1: circle.point2, point2: circle.point3), default: 0] += 1
-            edges[DEdge(point1: circle.point3, point2: circle.point1), default: 0] += 1
+            processEdges(&edges, circle: circle)
         }
     }
     
-    // Remove processed triangles
     context.open.subtract(trianglesToRemove)
     
-    // Create new triangles from unique edges
     for (edge, count) in edges where count == 1 {
-        let newCircle = fastCircumcircle(edge.point1, edge.point2, currentPoint)
-        context.open.insert(newCircle)
+        context.open.insert(fastCircumcircle(edge.point1, edge.point2, currentPoint))
     }
 }
 
@@ -246,36 +201,34 @@ public func triangulate(_ points: [DPoint]) -> [DTriangle] {
     
     // Initialize context
     let context = TriangulationContext(capacity: points.count)
-    var uniqueCount = 0
     
-    // Remove duplicates and sort points by x-coordinate
+    // Remove duplicates and sort points
     var seen = Set<DPoint>(minimumCapacity: min(points.count, 1024))
-    var sortedPoints = [DPoint]()
+    var sortedPoints = ContiguousArray<DPoint>()
     sortedPoints.reserveCapacity(points.count)
     
-    for point in points {
-        let pointWithIndex = DPoint(x: point.x, y: point.y, index: uniqueCount)
+    for (index, point) in points.enumerated() {
+        let pointWithIndex = DPoint(x: point.x, y: point.y, index: index)
         if seen.insert(pointWithIndex).inserted {
             sortedPoints.append(pointWithIndex)
-            uniqueCount += 1
         }
     }
     
-    guard uniqueCount >= 3 else { return [] }
+    guard sortedPoints.count >= 3 else { return [] }
     
-    // Sort points by x-coordinate for correct processing order
+    // Sort by x-coordinate
     sortedPoints.sort { $0.x < $1.x }
     
     // Copy sorted points to context
-    for (i, point) in sortedPoints.enumerated() {
-        context.points[i] = point
-    }
+    _ = UnsafeMutableBufferPointer(start: context.points.baseAddress!,
+                                  count: sortedPoints.count)
+        .initialize(from: sortedPoints)
     
     // Calculate supertriangle bounds
-    let bounds = points.reduce((min: SIMD2<Double>(Double.infinity, Double.infinity),
-                              max: SIMD2<Double>(-Double.infinity, -Double.infinity))) { result, point in
-        (SIMD2(min(result.min.x, point.x), min(result.min.y, point.y)),
-         SIMD2(max(result.max.x, point.x), max(result.max.y, point.y)))
+    let bounds = sortedPoints.reduce(into: (min: SIMD2<Double>(Double.infinity, Double.infinity),
+                                          max: SIMD2<Double>(-Double.infinity, -Double.infinity))) { result, point in
+        result.min = SIMD2(min(result.min.x, point.x), min(result.min.y, point.y))
+        result.max = SIMD2(max(result.max.x, point.x), max(result.max.y, point.y))
     }
     
     let delta = bounds.max - bounds.min
@@ -284,39 +237,36 @@ public func triangulate(_ points: [DPoint]) -> [DTriangle] {
     let margin = dmax * 20
     
     // Add supertriangle points
-    let superPoints = [
-        DPoint(x: mid.x - margin, y: mid.y - dmax, index: -1),
-        DPoint(x: mid.x, y: mid.y + margin, index: -2),
-        DPoint(x: mid.x + margin, y: mid.y - dmax, index: -3)
-    ]
-    
-    for (i, point) in superPoints.enumerated() {
-        context.points[uniqueCount + i] = point
-    }
+    let n = sortedPoints.count
+    context.points[n] = DPoint(x: mid.x - margin, y: mid.y - dmax, index: -1)
+    context.points[n + 1] = DPoint(x: mid.x, y: mid.y + margin, index: -2)
+    context.points[n + 2] = DPoint(x: mid.x + margin, y: mid.y - dmax, index: -3)
     
     // Initialize with supertriangle
-    let initial = fastCircumcircle(context.points[uniqueCount],
-                                 context.points[uniqueCount + 1],
-                                 context.points[uniqueCount + 2])
-    context.open.insert(initial)
+    context.open.insert(fastCircumcircle(context.points[n],
+                                       context.points[n + 1],
+                                       context.points[n + 2]))
     
-    // Process points sequentially in x-coordinate order
-    for i in 0..<uniqueCount {
-        processPoint(context: context, currentPoint: sortedPoints[i])
+    // Process each point
+    for point in sortedPoints {
+        processPoint(context: context, currentPoint: point)
     }
     
     // Add remaining open triangles to completed set
     context.completed.formUnion(context.open)
     
-    // Filter out triangles connected to supertriangle
-    return context.completed.compactMap { circle in
-        guard circle.point1.index >= 0,
-              circle.point2.index >= 0,
-              circle.point3.index >= 0 else {
-            return nil
+    // Prepare result array
+    var result = [DTriangle]()
+    result.reserveCapacity(context.completed.count)
+    
+    // Filter out supertriangle
+    for circle in context.completed {
+        if circle.point1.index >= 0 && circle.point2.index >= 0 && circle.point3.index >= 0 {
+            result.append(DTriangle(point1: circle.point1,
+                                  point2: circle.point2,
+                                  point3: circle.point3))
         }
-        return DTriangle(point1: circle.point1,
-                        point2: circle.point2,
-                        point3: circle.point3)
     }
+    
+    return result
 }
