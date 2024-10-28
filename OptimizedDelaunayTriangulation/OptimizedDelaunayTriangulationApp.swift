@@ -140,17 +140,9 @@ struct MetalView: NSViewRepresentable {
             let triangulationStartTime = DispatchTime.now()
             let triangles = triangulate(randomPoints)
             let triangulationEndTime = DispatchTime.now()
-                        
+                    
             let triangulationTime = Double(triangulationEndTime.uptimeNanoseconds - triangulationStartTime.uptimeNanoseconds) / 1_000_000
             print("Triangulation Time: \(triangulationTime) ms")
-            
-            /* Debug: Print first few triangles
-            for (i, triangle) in triangles.prefix(3).enumerated() {
-                print("Triangle \(i):")
-                print("  Point1: (\(triangle.point1.x), \(triangle.point1.y))")
-                print("  Point2: (\(triangle.point2.x), \(triangle.point2.y))")
-                print("  Point3: (\(triangle.point3.x), \(triangle.point3.y))")
-            }*/
 
             // Convert triangulation points to Metal-compatible vertices and build point map
             var vertices = [SIMD2<Float>]()
