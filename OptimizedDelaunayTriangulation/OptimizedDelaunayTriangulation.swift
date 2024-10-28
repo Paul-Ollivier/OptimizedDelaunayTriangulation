@@ -78,26 +78,23 @@ struct DEdge: Hashable {
 
 // MARK: - Memory Management
 
-final class TriangulationContext {
-    private(set) var points: UnsafeMutableBufferPointer<DPoint>
+private final class TriangulationContext {
+    let points: UnsafeMutableBufferPointer<DPoint>
     var open: Set<DCircumcircle>
     var completed: Set<DCircumcircle>
-    var edges: [DEdge: Int]
-    let pointCount: Int
     
     init(capacity: Int) {
-        self.pointCount = capacity
         let allocatedPoints = UnsafeMutablePointer<DPoint>.allocate(capacity: capacity + 3)
         self.points = UnsafeMutableBufferPointer(start: allocatedPoints, count: capacity + 3)
-        self.open = Set(minimumCapacity: capacity)
-        self.completed = Set(minimumCapacity: capacity * 2)
-        self.edges = Dictionary(minimumCapacity: capacity * 3)
+        self.open = Set(minimumCapacity: max(16, capacity / 4))
+        self.completed = Set(minimumCapacity: max(16, capacity / 2))
     }
     
     deinit {
         points.deallocate()
     }
 }
+
 
 // MARK: - SIMD Optimized Geometric Calculations
 
@@ -204,42 +201,41 @@ private func blockQuicksort(_ points: UnsafeMutableBufferPointer<DPoint>, low: I
 
 // MARK: - Parallel Point Processing
 
-private func processPointBatch(context: TriangulationContext, startIndex: Int, endIndex: Int) {
-    var localEdges = [DEdge: Int](minimumCapacity: (endIndex - startIndex) * 3)
+@inline(__always)
+private func processPoint(context: TriangulationContext, currentPoint: DPoint) {
     var trianglesToRemove = Set<DCircumcircle>()
+    var edges = [DEdge: Int]()
+    trianglesToRemove.reserveCapacity(32)
+    edges.reserveCapacity(32)
     
-    for i in startIndex..<endIndex {
-        let currentPoint = context.points[i]
-        trianglesToRemove.removeAll(keepingCapacity: true)
-        localEdges.removeAll(keepingCapacity: true)
+    // First pass: identify triangles to remove and collect edges
+    for circle in context.open {
+        let dx = currentPoint.x - circle.x
         
-        // Process circles and collect edges
-        for circle in context.open {
-            let dx = currentPoint.x - circle.x
-            
-            if dx > 0 && dx * dx > circle.rsqr {
-                context.completed.insert(circle)
-                trianglesToRemove.insert(circle)
-                continue
-            }
-            
-            let dy = currentPoint.y - circle.y
-            if dx * dx + dy * dy - circle.rsqr <= Double.ulpOfOne {
-                trianglesToRemove.insert(circle)
-                
-                localEdges[DEdge(point1: circle.point1, point2: circle.point2), default: 0] += 1
-                localEdges[DEdge(point1: circle.point2, point2: circle.point3), default: 0] += 1
-                localEdges[DEdge(point1: circle.point3, point2: circle.point1), default: 0] += 1
-            }
+        if dx > 0 && dx * dx > circle.rsqr {
+            context.completed.insert(circle)
+            trianglesToRemove.insert(circle)
+            continue
         }
         
-        context.open.subtract(trianglesToRemove)
-        
-        // Create new triangles
-        for (edge, count) in localEdges where count == 1 {
-            let newCircle = fastCircumcircle(edge.point1, edge.point2, currentPoint)
-            context.open.insert(newCircle)
+        let dy = currentPoint.y - circle.y
+        if dx * dx + dy * dy - circle.rsqr <= Double.ulpOfOne {
+            trianglesToRemove.insert(circle)
+            
+            // Collect edges
+            edges[DEdge(point1: circle.point1, point2: circle.point2), default: 0] += 1
+            edges[DEdge(point1: circle.point2, point2: circle.point3), default: 0] += 1
+            edges[DEdge(point1: circle.point3, point2: circle.point1), default: 0] += 1
         }
+    }
+    
+    // Remove processed triangles
+    context.open.subtract(trianglesToRemove)
+    
+    // Create new triangles from unique edges
+    for (edge, count) in edges where count == 1 {
+        let newCircle = fastCircumcircle(edge.point1, edge.point2, currentPoint)
+        context.open.insert(newCircle)
     }
 }
 
@@ -248,41 +244,50 @@ private func processPointBatch(context: TriangulationContext, startIndex: Int, e
 public func triangulate(_ points: [DPoint]) -> [DTriangle] {
     guard points.count >= 3 else { return [] }
     
+    // Initialize context
     let context = TriangulationContext(capacity: points.count)
-    
-    // Remove duplicates while preserving order using a more efficient approach
-    var seen = Set<DPoint>(minimumCapacity: points.count)
     var uniqueCount = 0
     
-    for (index, point) in points.enumerated() {
-        let pointWithIndex = DPoint(x: point.x, y: point.y, index: index)
+    // Remove duplicates and sort points by x-coordinate
+    var seen = Set<DPoint>(minimumCapacity: min(points.count, 1024))
+    var sortedPoints = [DPoint]()
+    sortedPoints.reserveCapacity(points.count)
+    
+    for point in points {
+        let pointWithIndex = DPoint(x: point.x, y: point.y, index: uniqueCount)
         if seen.insert(pointWithIndex).inserted {
-            context.points[uniqueCount] = pointWithIndex
+            sortedPoints.append(pointWithIndex)
             uniqueCount += 1
         }
     }
     
     guard uniqueCount >= 3 else { return [] }
     
-    // Sort points using block quicksort
-    blockQuicksort(UnsafeMutableBufferPointer(start: context.points.baseAddress!, count: uniqueCount), low: 0, high: uniqueCount - 1)
+    // Sort points by x-coordinate for correct processing order
+    sortedPoints.sort { $0.x < $1.x }
     
-    // Add supertriangle points efficiently
-    let (minX, maxX, minY, maxY) = points.reduce((Double.infinity, -Double.infinity, Double.infinity, -Double.infinity)) { result, point in
-        (min(result.0, point.x), max(result.1, point.x), min(result.2, point.y), max(result.3, point.y))
+    // Copy sorted points to context
+    for (i, point) in sortedPoints.enumerated() {
+        context.points[i] = point
     }
     
-    let dx = maxX - minX
-    let dy = maxY - minY
-    let dmax = max(dx, dy)
-    let xmid = minX + dx * 0.5
-    let ymid = minY + dy * 0.5
+    // Calculate supertriangle bounds
+    let bounds = points.reduce((min: SIMD2<Double>(Double.infinity, Double.infinity),
+                              max: SIMD2<Double>(-Double.infinity, -Double.infinity))) { result, point in
+        (SIMD2(min(result.min.x, point.x), min(result.min.y, point.y)),
+         SIMD2(max(result.max.x, point.x), max(result.max.y, point.y)))
+    }
+    
+    let delta = bounds.max - bounds.min
+    let dmax = max(delta.x, delta.y)
+    let mid = (bounds.max + bounds.min) * 0.5
     let margin = dmax * 20
     
+    // Add supertriangle points
     let superPoints = [
-        DPoint(x: xmid - margin, y: ymid - dmax, index: -1),
-        DPoint(x: xmid, y: ymid + margin, index: -2),
-        DPoint(x: xmid + margin, y: ymid - dmax, index: -3)
+        DPoint(x: mid.x - margin, y: mid.y - dmax, index: -1),
+        DPoint(x: mid.x, y: mid.y + margin, index: -2),
+        DPoint(x: mid.x + margin, y: mid.y - dmax, index: -3)
     ]
     
     for (i, point) in superPoints.enumerated() {
@@ -290,22 +295,20 @@ public func triangulate(_ points: [DPoint]) -> [DTriangle] {
     }
     
     // Initialize with supertriangle
-    context.open.insert(fastCircumcircle(context.points[uniqueCount],
-                                       context.points[uniqueCount + 1],
-                                       context.points[uniqueCount + 2]))
+    let initial = fastCircumcircle(context.points[uniqueCount],
+                                 context.points[uniqueCount + 1],
+                                 context.points[uniqueCount + 2])
+    context.open.insert(initial)
     
-    // Process points in parallel batches
-    let batchSize = max(1000, uniqueCount / ProcessInfo.processInfo.activeProcessorCount)
-    DispatchQueue.concurrentPerform(iterations: (uniqueCount + batchSize - 1) / batchSize) { batch in
-        let start = batch * batchSize
-        let end = min(start + batchSize, uniqueCount)
-        processPointBatch(context: context, startIndex: start, endIndex: end)
+    // Process points sequentially in x-coordinate order
+    for i in 0..<uniqueCount {
+        processPoint(context: context, currentPoint: sortedPoints[i])
     }
     
-    // Final processing
+    // Add remaining open triangles to completed set
     context.completed.formUnion(context.open)
     
-    // Efficiently filter and transform results
+    // Filter out triangles connected to supertriangle
     return context.completed.compactMap { circle in
         guard circle.point1.index >= 0,
               circle.point2.index >= 0,
