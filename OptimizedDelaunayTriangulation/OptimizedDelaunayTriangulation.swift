@@ -86,8 +86,11 @@ final class TriangulationContext {
     init(capacity: Int) {
         let allocatedPoints = UnsafeMutablePointer<DPoint>.allocate(capacity: capacity + 3)
         self.points = UnsafeMutableBufferPointer(start: allocatedPoints, count: capacity + 3)
-        self.open = Set(minimumCapacity: max(16, capacity / 4))
-        self.completed = Set(minimumCapacity: max(16, capacity / 2))
+        // Use power of 2 for better hash table performance
+        let openCapacity = max(16, (capacity / 4).nextPowerOf2())
+        let completedCapacity = max(16, (capacity / 2).nextPowerOf2())
+        self.open = Set(minimumCapacity: openCapacity)
+        self.completed = Set(minimumCapacity: completedCapacity)
         self.edgePool = Dictionary(minimumCapacity: max(32, capacity))
         self.removePool = Set(minimumCapacity: max(32, capacity / 4))
     }
@@ -225,8 +228,8 @@ public func triangulate(_ points: [DPoint]) -> [DTriangle] {
     // Calculate supertriangle bounds
     let bounds = points.reduce(into: (min: SIMD2<Double>(Double.infinity, Double.infinity),
                                     max: SIMD2<Double>(-Double.infinity, -Double.infinity))) { result, point in
-        result.min = SIMD2(min(result.min.x, point.x), min(result.min.y, point.y))
-        result.max = SIMD2(max(result.max.x, point.x), max(result.max.y, point.y))
+        result.min = simd_min(result.min, SIMD2(point.x, point.y))
+        result.max = simd_max(result.max, SIMD2(point.x, point.y))
     }
     
     let delta = bounds.max - bounds.min
@@ -257,13 +260,23 @@ public func triangulate(_ points: [DPoint]) -> [DTriangle] {
     result.reserveCapacity(context.completed.count)
     
     // Filter out supertriangle
-    for circle in context.completed {
-        if circle.point1.index >= 0 && circle.point2.index >= 0 && circle.point3.index >= 0 {
-            result.append(DTriangle(point1: circle.point1,
-                                  point2: circle.point2,
-                                  point3: circle.point3))
-        }
+    for circle in context.completed where circle.point1.index >= 0 && circle.point2.index >= 0 && circle.point3.index >= 0 {
+        result.append(DTriangle(point1: circle.point1,
+                              point2: circle.point2,
+                              point3: circle.point3))
     }
     
     return result
+}
+
+private extension Int {
+    func nextPowerOf2() -> Int {
+        var n = self - 1
+        n |= n >> 1
+        n |= n >> 2
+        n |= n >> 4
+        n |= n >> 8
+        n |= n >> 16
+        return n + 1
+    }
 }

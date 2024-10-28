@@ -129,7 +129,7 @@ struct MetalView: NSViewRepresentable {
             // Generate random points in screen space
             var randomPoints = [DPoint]()
             
-            for _ in 0..<1000 {
+            for _ in 0..<10000 {
                 let x = CGFloat.random(in: -1.0...1.0)
                 let y = CGFloat.random(in: -1.0...1.0)
                 randomPoints.append(DPoint(x: x, y: y))
