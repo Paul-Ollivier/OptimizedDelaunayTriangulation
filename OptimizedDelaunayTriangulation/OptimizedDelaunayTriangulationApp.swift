@@ -79,7 +79,8 @@ class Coordinator: NSObject, MTKViewDelegate {
         isProcessing = true
         needsUpdate = false
         
-        let pointCount = Int.random(in: 100...1000)
+        // let pointCount = Int.random(in: 100...1000)
+        let pointCount = 1000
         var randomPoints = [DPoint]()
         randomPoints.reserveCapacity(pointCount)
         

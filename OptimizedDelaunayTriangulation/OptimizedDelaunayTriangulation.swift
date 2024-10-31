@@ -1,7 +1,6 @@
 import Foundation
 import simd
 
-
 // MARK: - Data Types
 public struct DPoint {
     public let x: Double
@@ -250,44 +249,25 @@ public func parallelTriangulate(_ inputPoints: [DPoint]) async -> [DTriangle] {
         superTrianglePoints[2]
     )
     
-    // Parallel processing setup
+    // Parallel processing setup using TaskGroup
     let availableCores = ProcessInfo.processInfo.activeProcessorCount
     let optimalChunkSize = max(50, uniquePoints.count / (availableCores * 2))
-    var chunks: [[DPoint]] = []
-    var currentChunk: [DPoint] = []
-    var currentX = uniquePoints[0].x
     
-    for point in uniquePoints {
-        if currentChunk.count >= optimalChunkSize && point.x > currentX {
-            chunks.append(currentChunk)
-            currentChunk = []
-            currentX = point.x
-        }
-        currentChunk.append(point)
-    }
-    if !currentChunk.isEmpty {
-        chunks.append(currentChunk)
-    }
-    
-    // print("Starting triangulation with \(chunks.count) chunks on \(availableCores) cores")
-    
-    // Process chunks
     var completedCircles = Set<DCircumcircle>()
     var openCircles = [initialCircle]
-    let workers = chunks.indices.map { index in
-        TriangulationWorker(workerId: index, capacity: optimalChunkSize)
-    }
     
-    for (index, chunk) in chunks.enumerated() {
-        // let chunkStartTime = CFAbsoluteTimeGetCurrent()
-        let worker = workers[index]
-        let (completed, remaining) = await worker.process(points: chunk, initialOpen: openCircles)
+    await withTaskGroup(of: (Set<DCircumcircle>, [DCircumcircle]).self) { group in
+        for chunk in uniquePoints.chunked(into: optimalChunkSize) {
+            group.addTask {
+                let worker = TriangulationWorker(workerId: 0, capacity: chunk.count)
+                return await worker.process(points: chunk, initialOpen: openCircles)
+            }
+        }
         
-        completedCircles.formUnion(completed)
-        openCircles = remaining
-        
-        // let chunkEndTime = CFAbsoluteTimeGetCurrent()
-        // print("Chunk \(index + 1)/\(chunks.count) processed in \((chunkEndTime - chunkStartTime) * 1000)ms")
+        for await (completed, remaining) in group {
+            completedCircles.formUnion(completed)
+            openCircles.append(contentsOf: remaining)
+        }
     }
     
     // Add remaining circles and convert to triangles
@@ -305,4 +285,13 @@ public func parallelTriangulate(_ inputPoints: [DPoint]) async -> [DTriangle] {
     print("Generated \(triangles.count) triangles from \(uniquePoints.count) points")
     
     return triangles
+}
+
+// Extension to chunk the array into smaller parts
+extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
+    }
 }
