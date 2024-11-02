@@ -7,10 +7,10 @@ struct Point {
     var y: Double
 }
 
-struct Delaunator {
+struct OptimizedDelaunay {
     let triangles: [UInt32]
     
-    static func from(points: [Point]) -> Delaunator {
+    static func from(points: [Point]) -> OptimizedDelaunay {
         // Convert Point array to DPoint array
         let dpoints = points.enumerated().map { index, point in
             DPoint(x: point.x, y: point.y, index: index)
@@ -29,7 +29,7 @@ struct Delaunator {
             triangleIndices.append(UInt32(triangle.point3.index))
         }
         
-        return Delaunator(triangles: triangleIndices)
+        return OptimizedDelaunay(triangles: triangleIndices)
     }
 }
 

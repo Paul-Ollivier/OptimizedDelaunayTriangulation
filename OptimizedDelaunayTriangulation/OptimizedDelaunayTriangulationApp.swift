@@ -2,16 +2,16 @@ import SwiftUI
 
 
 @main
-struct DelaunatorApp: App {
+struct OptimizedDelaunayApp: App {
     var body: some Scene {
         WindowGroup {
-            DelaunatorView()
+            OptimizedDelaunayView()
         }
     }
 }
 
 
-struct DelaunatorView: View {
+struct OptimizedDelaunayView: View {
     @State private var points: [Point] = []
     @State private var triangles: [UInt32] = []
     @State private var lastExecutionTime: Double = 0
@@ -80,7 +80,7 @@ struct DelaunatorView: View {
         // Measure triangulation time
         let startTime = CFAbsoluteTimeGetCurrent()
         
-        let delaunator = Delaunator.from(points: newPoints)
+        let delaunator = OptimizedDelaunay.from(points: newPoints)
         
         let endTime = CFAbsoluteTimeGetCurrent()
         lastExecutionTime = (endTime - startTime) * 1000 // Convert to milliseconds
