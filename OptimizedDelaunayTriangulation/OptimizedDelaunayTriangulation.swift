@@ -1,405 +1,543 @@
 import Foundation
-import simd
+import Darwin
 
-// MARK: - Public Types
-
-public struct DPoint {
-    public let x: Double
-    public let y: Double
-    @usableFromInline let index: Int
-
-    @usableFromInline
-    init(x: Double, y: Double, index: Int) {
-        self.x = x
-        self.y = y
-        self.index = index
-    }
-
-    public init(x: Double, y: Double) {
-        self.init(x: x, y: y, index: 0)
-    }
+struct Point {
+    let x: Double
+    let y: Double
 }
 
-extension DPoint: Hashable {
-    public func hash(into hasher: inout Hasher) {
-        hasher.combine(index)
-    }
-
-    public static func == (lhs: DPoint, rhs: DPoint) -> Bool {
-        return lhs.index == rhs.index
-    }
-}
-
-public struct DTriangle: Hashable {
-    public let point1: DPoint
-    public let point2: DPoint
-    public let point3: DPoint
-
-    @usableFromInline
-    init(point1: DPoint, point2: DPoint, point3: DPoint) {
-        self.point1 = point1
-        self.point2 = point2
-        self.point3 = point3
-    }
-}
-
-// MARK: - Internal Types
-
-@usableFromInline
-struct DCircumcircle {
-    @usableFromInline let point1: DPoint
-    @usableFromInline let point2: DPoint
-    @usableFromInline let point3: DPoint
-    @usableFromInline let x: Double
-    @usableFromInline let y: Double
-    @usableFromInline let rsqr: Double
-}
-
-extension DCircumcircle: Hashable {
-    @usableFromInline func hash(into hasher: inout Hasher) {
-        hasher.combine(point1.index)
-        hasher.combine(point2.index)
-        hasher.combine(point3.index)
-    }
-
-    @usableFromInline static func == (lhs: DCircumcircle, rhs: DCircumcircle) -> Bool {
-        return lhs.point1.index == rhs.point1.index &&
-               lhs.point2.index == rhs.point2.index &&
-               lhs.point3.index == rhs.point3.index
-    }
-}
-
-@usableFromInline
-struct DEdge {
-    @usableFromInline let point1: DPoint
-    @usableFromInline let point2: DPoint
-
-    @usableFromInline
-    init(point1: DPoint, point2: DPoint) {
-        if point1.index <= point2.index {
-            self.point1 = point1
-            self.point2 = point2
-        } else {
-            self.point1 = point2
-            self.point2 = point1
+class Delaunator {
+    private let EPSILON: Double = Darwin.pow(2.0, -52)
+    private var EDGE_STACK = [UInt32](repeating: 0, count: 512)
+    
+    private var coords: [Double]
+    public private(set) var triangles: [UInt32]
+    public private(set) var halfedges: [Int32]
+    private var trianglesLen: Int = 0
+    public private(set) var hull: [UInt32] = []
+    
+    // Temporary arrays
+    private var _hashSize: Int
+    private var _hullPrev: [UInt32]
+    private var _hullNext: [UInt32]
+    private var _hullTri: [UInt32]
+    private var _hullHash: [Int32]
+    private var _ids: [UInt32]
+    private var _dists: [Double]
+    private var _cx: Double = 0
+    private var _cy: Double = 0
+    private var _hullStart: UInt32 = 0
+    
+    static func from(points: [Point]) -> Delaunator {
+        let n = points.count
+        var coords = [Double](repeating: 0, count: n * 2)
+        
+        for i in 0..<n {
+            coords[2 * i] = points[i].x
+            coords[2 * i + 1] = points[i].y
         }
+        
+        return Delaunator(coords: coords)
     }
-}
-
-extension DEdge: Hashable {
-    @usableFromInline func hash(into hasher: inout Hasher) {
-        hasher.combine(point1.index)
-        hasher.combine(point2.index)
+    
+    init(coords: [Double]) {
+        let n = coords.count >> 1
+        self.coords = coords
+        
+        let maxTriangles = max(2 * n - 5, 0)
+        self.triangles = [UInt32](repeating: 0, count: maxTriangles * 3)
+        self.halfedges = [Int32](repeating: 0, count: maxTriangles * 3)
+        
+        self._hashSize = Int(ceil(sqrt(Double(n))))
+        self._hullPrev = [UInt32](repeating: 0, count: n)
+        self._hullNext = [UInt32](repeating: 0, count: n)
+        self._hullTri = [UInt32](repeating: 0, count: n)
+        self._hullHash = [Int32](repeating: -1, count: self._hashSize)
+        self._ids = [UInt32](repeating: 0, count: n)
+        self._dists = [Double](repeating: 0, count: n)
+        
+        update()
     }
-
-    @usableFromInline static func == (lhs: DEdge, rhs: DEdge) -> Bool {
-        return lhs.point1.index == rhs.point1.index &&
-               lhs.point2.index == rhs.point2.index
-    }
-}
-
-// MARK: - Triangulation Context
-
-@usableFromInline
-final class TriangulationContext {
-    var points: [DPoint]
-    var open: [DCircumcircle] // Changed from Set to Array
-    var completed: Set<DCircumcircle>
-    var edgePool: Set<DEdge>
-    var totalProcessPointTime: Double
-
-    @usableFromInline
-    init(capacity: Int) {
-        self.points = []
-        self.points.reserveCapacity(capacity + 3)
-        self.open = []
-        self.completed = Set(minimumCapacity: capacity)
-        self.edgePool = Set(minimumCapacity: capacity)
-        self.totalProcessPointTime = 0
-    }
-}
-
-// MARK: - Geometric Calculations
-
-@usableFromInline
-func fastCircumcircle(_ i: DPoint, _ j: DPoint, _ k: DPoint) -> DCircumcircle {
-    let p1 = SIMD2<Double>(i.x, i.y)
-    let p2 = SIMD2<Double>(j.x, j.y)
-    let p3 = SIMD2<Double>(k.x, k.y)
-
-    let d = 2 * ((p1.x * (p2.y - p3.y)) +
-                 (p2.x * (p3.y - p1.y)) +
-                 (p3.x * (p1.y - p2.y)))
-
-    if abs(d) < Double.ulpOfOne {
-        let center = (p1 + p3) * 0.5
-        let diff = p1 - center
-        let rsqr = simd_length_squared(diff)
-        return DCircumcircle(point1: i, point2: j, point3: k,
-                             x: center.x, y: center.y, rsqr: rsqr)
-    }
-
-    let sq1 = simd_length_squared(p1)
-    let sq2 = simd_length_squared(p2)
-    let sq3 = simd_length_squared(p3)
-
-    let x = ((sq1 * (p2.y - p3.y)) +
-             (sq2 * (p3.y - p1.y)) +
-             (sq3 * (p1.y - p2.y))) / d
-
-    let y = ((sq1 * (p3.x - p2.x)) +
-             (sq2 * (p1.x - p3.x)) +
-             (sq3 * (p2.x - p1.x))) / d
-
-    let center = SIMD2<Double>(x, y)
-    let diff = p1 - center
-    let rsqr = simd_length_squared(diff)
-
-    return DCircumcircle(point1: i, point2: j, point3: k,
-                         x: center.x, y: center.y, rsqr: rsqr)
-}
-
-@inline(__always)
-private func processEdges(_ edges: inout Set<DEdge>, circle: DCircumcircle) {
-    toggleEdge(&edges, DEdge(point1: circle.point1, point2: circle.point2))
-    toggleEdge(&edges, DEdge(point1: circle.point2, point2: circle.point3))
-    toggleEdge(&edges, DEdge(point1: circle.point3, point2: circle.point1))
-}
-
-@inline(__always)
-private func toggleEdge(_ edges: inout Set<DEdge>, _ edge: DEdge) {
-    if !edges.insert(edge).inserted {
-        edges.remove(edge)
-    }
-}
-
-// Binary search extension
-extension Array {
-    func binarySearch(comparator: (Element) -> ComparisonResult) -> Int {
-        var low = 0
-        var high = self.count
-        while low < high {
-            let mid = (low + high) / 2
-            switch comparator(self[mid]) {
-            case .orderedAscending:
-                low = mid + 1
-            case .orderedDescending:
-                high = mid
-            case .orderedSame:
-                return mid
+    
+    private func update() {
+        let n = coords.count >> 1
+        
+        var minX = Double.infinity
+        var minY = Double.infinity
+        var maxX = -Double.infinity
+        var maxY = -Double.infinity
+        
+        for i in 0..<n {
+            let x = coords[2 * i]
+            let y = coords[2 * i + 1]
+            if x < minX { minX = x }
+            if y < minY { minY = y }
+            if x > maxX { maxX = x }
+            if y > maxY { maxY = y }
+            _ids[i] = UInt32(i)
+        }
+        
+        let cx = (minX + maxX) / 2
+        let cy = (minY + maxY) / 2
+        
+        var i0: Int = 0
+        var minDist = Double.infinity
+        
+        for i in 0..<n {
+            let d = dist(ax: cx, ay: cy, bx: coords[2 * i], by: coords[2 * i + 1])
+            if d < minDist {
+                i0 = i
+                minDist = d
             }
         }
-        return low
-    }
-}
-
-@usableFromInline
-func insertCircleIntoOpen(_ open: inout [DCircumcircle], _ circle: DCircumcircle) {
-    let insertionIndex = open.binarySearch { existingCircle in
-        if existingCircle.x < circle.x {
-            return .orderedAscending
-        } else if existingCircle.x > circle.x {
-            return .orderedDescending
+        
+        let i0x = coords[2 * i0]
+        let i0y = coords[2 * i0 + 1]
+        
+        var i1: Int = 0
+        minDist = Double.infinity
+        
+        for i in 0..<n {
+            if i == i0 { continue }
+            let d = dist(ax: i0x, ay: i0y, bx: coords[2 * i], by: coords[2 * i + 1])
+            if d < minDist && d > 0 {
+                i1 = i
+                minDist = d
+            }
+        }
+        
+        var i1x = coords[2 * i1]
+        var i1y = coords[2 * i1 + 1]
+        
+        var minRadius = Double.infinity
+        var i2: Int = 0
+        
+        for i in 0..<n {
+            if i == i0 || i == i1 { continue }
+            let r = circumradius(ax: i0x, ay: i0y, bx: i1x, by: i1y,
+                                 cx: coords[2 * i], cy: coords[2 * i + 1])
+            if r < minRadius {
+                i2 = i
+                minRadius = r
+            }
+        }
+        
+        var i2x = coords[2 * i2]
+        var i2y = coords[2 * i2 + 1]
+        
+        if minRadius == Double.infinity {
+            // Handle collinear points
+            for i in 0..<n {
+                _dists[i] = coords[2 * i] - coords[0] != 0 ?
+                coords[2 * i] - coords[0] : coords[2 * i + 1] - coords[1]
+            }
+            quicksort(ids: &_ids, dists: _dists, left: 0, right: n - 1)
+            var hull = [UInt32](repeating: 0, count: n)
+            var j = 0
+            var d0 = -Double.infinity
+            
+            for i in 0..<n {
+                let id = _ids[i]
+                if _dists[Int(id)] > d0 {
+                    hull[j] = id
+                    j += 1
+                    d0 = _dists[Int(id)]
+                }
+            }
+            
+            self.hull = Array(hull[0..<j])
+            self.triangles = []
+            self.halfedges = []
+            trianglesLen = 0
+            return
+        }
+        
+        if orient2d(ax: i0x, ay: i0y, bx: i1x, by: i1y, cx: i2x, cy: i2y) < 0 {
+            let i = i1
+            let x = i1x
+            let y = i1y
+            i1 = i2
+            i1x = i2x
+            i1y = i2y
+            i2 = i
+            i2x = x
+            i2y = y
+        }
+        
+        let center = circumcenter(ax: i0x, ay: i0y, bx: i1x, by: i1y, cx: i2x, cy: i2y)
+        self._cx = center.x
+        self._cy = center.y
+        
+        for i in 0..<n {
+            _dists[i] = dist(ax: coords[2 * i], ay: coords[2 * i + 1],
+                             bx: center.x, by: center.y)
+        }
+        
+        quicksort(ids: &_ids, dists: _dists, left: 0, right: n - 1)
+        
+        self._hullStart = UInt32(i0)
+        var hullSize = 3
+        
+        _hullNext[i0] = UInt32(i1)
+        _hullPrev[i2] = UInt32(i1)
+        _hullNext[i1] = UInt32(i2)
+        _hullPrev[i0] = UInt32(i2)
+        _hullNext[i2] = UInt32(i0)
+        _hullPrev[i1] = UInt32(i0)
+        
+        _hullTri[i0] = 0
+        _hullTri[i1] = 1
+        _hullTri[i2] = 2
+        
+        _hullHash = [Int32](repeating: -1, count: _hashSize)
+        _hullHash[hashKey(x: i0x, y: i0y)] = Int32(i0)
+        _hullHash[hashKey(x: i1x, y: i1y)] = Int32(i1)
+        _hullHash[hashKey(x: i2x, y: i2y)] = Int32(i2)
+        
+        trianglesLen = 0
+        _ = addTriangle(i0: UInt32(i0), i1: UInt32(i1), i2: UInt32(i2),
+                        a: -1, b: -1, c: -1)
+        
+        var xp: Double = 0
+        var yp: Double = 0
+        
+        for k in 0..<_ids.count {
+            let i = Int(_ids[k])
+            let x = coords[2 * i]
+            let y = coords[2 * i + 1]
+            
+            if k > 0 && abs(x - xp) <= EPSILON && abs(y - yp) <= EPSILON { continue }
+            xp = x
+            yp = y
+            
+            if i == i0 || i == i1 || i == i2 { continue }
+            
+            var start: Int = 0
+            let key = hashKey(x: x, y: y)
+            
+            for j in 0..<_hashSize {
+                start = Int(_hullHash[(key + j) % _hashSize])
+                if start != -1 && start != Int(_hullNext[start]) { break }
+            }
+            
+            start = Int(_hullPrev[start])
+            var e = start
+            
+            while true {
+                let q = Int(_hullNext[e])
+                if orient2d(ax: x, ay: y,
+                            bx: coords[2 * e], by: coords[2 * e + 1],
+                            cx: coords[2 * q], cy: coords[2 * q + 1]) < 0 { break }
+                e = q
+                if e == start {
+                    e = -1
+                    break
+                }
+            }
+            
+            if e == -1 { continue }
+            
+            var t = addTriangle(i0: UInt32(e), i1: UInt32(i),
+                                i2: _hullNext[e],
+                                a: -1, b: -1, c: Int32(_hullTri[e]))
+            
+            _hullTri[i] = legalize(a: t + 2)
+            _hullTri[e] = UInt32(t)
+            hullSize += 1
+            
+            var n = Int(_hullNext[e])
+            while true {
+                let q = Int(_hullNext[n])
+                if orient2d(ax: x, ay: y,
+                            bx: coords[2 * n], by: coords[2 * n + 1],
+                            cx: coords[2 * q], cy: coords[2 * q + 1]) >= 0 { break }
+                
+                t = addTriangle(i0: UInt32(n), i1: UInt32(i), i2: UInt32(q),
+                                a: Int32(_hullTri[i]), b: -1, c: Int32(_hullTri[n]))
+                _hullTri[i] = legalize(a: t + 2)
+                _hullNext[n] = UInt32(n)
+                hullSize -= 1
+                n = q
+            }
+            
+            if e == start {
+                while true {
+                    let q = Int(_hullPrev[e])
+                    if orient2d(ax: x, ay: y,
+                                bx: coords[2 * q], by: coords[2 * q + 1],
+                                cx: coords[2 * e], cy: coords[2 * e + 1]) >= 0 { break }
+                    
+                    t = addTriangle(i0: UInt32(q), i1: UInt32(i), i2: UInt32(e),
+                                    a: -1, b: Int32(_hullTri[e]), c: Int32(_hullTri[q]))
+                    _ = legalize(a: t + 2)
+                    _hullTri[q] = UInt32(t)
+                    _hullNext[e] = UInt32(e)
+                    hullSize -= 1
+                    e = q
+                }
+            }
+            
+            _hullPrev[i] = UInt32(e)
+            _hullStart = UInt32(e)
+            _hullNext[e] = UInt32(i)
+            _hullPrev[n] = UInt32(i)
+            _hullNext[i] = UInt32(n)
+            
+            _hullHash[hashKey(x: x, y: y)] = Int32(i)
+            _hullHash[hashKey(x: coords[2 * e], y: coords[2 * e + 1])] = Int32(e)
+        }
+        
+        hull = Array(repeating: 0, count: hullSize)
+        var e = Int(_hullStart)
+        for i in 0..<hullSize {
+            hull[i] = UInt32(e)
+            e = Int(_hullNext[e])
+        }
+        
+        if trianglesLen > 0 {
+            triangles = Array(triangles[0..<trianglesLen])
+            halfedges = Array(halfedges[0..<trianglesLen])
         } else {
-            return .orderedSame
+            triangles = []
+            halfedges = []
         }
     }
-    open.insert(circle, at: insertionIndex)
-}
-
-@usableFromInline
-func processPoint(context: TriangulationContext, currentPoint: DPoint) {
-    let startTime = DispatchTime.now()
-    // Reset the reusable collections
-    context.edgePool.removeAll(keepingCapacity: true)
-
-    var edges = context.edgePool
-    var removeIndices = [Int]()
-    var index = 0
-
-    while index < context.open.count {
-        let circle = context.open[index]
-        let dx = currentPoint.x - circle.x
-        let dxSquared = dx * dx
-
-        // Early exit if the circle cannot contain the point
-        if dx > 0 && dxSquared > circle.rsqr {
-            context.completed.insert(circle)
-            removeIndices.append(index)
-            index += 1
-            continue
+    
+    // Helper functions remain the same...
+    private func hashKey(x: Double, y: Double) -> Int {
+        let angle = pseudoAngle(dx: x - _cx, dy: y - _cy)
+        return Int(floor(Double(angle) * Double(_hashSize))) % _hashSize
+    }
+    
+    private func legalize(a: Int) -> UInt32 {
+        var i: Int = 0
+        var ar: Int = 0
+        var a = a
+        
+        while true {
+            let b = Int(halfedges[a])
+            
+            if b == -1 {
+                if i == 0 { break }
+                a = Int(EDGE_STACK[i - 1])
+                i -= 1
+                continue
+            }
+            
+            let a0 = a - a % 3
+            ar = a0 + (a + 2) % 3
+            
+            let b0 = b - b % 3
+            let al = a0 + (a + 1) % 3
+            let bl = b0 + (b + 2) % 3
+            
+            let p0 = Int(triangles[ar])
+            let pr = Int(triangles[a])
+            let pl = Int(triangles[al])
+            let p1 = Int(triangles[bl])
+            
+            let illegal = inCircle(ax: coords[2 * p0], ay: coords[2 * p0 + 1],
+                                   bx: coords[2 * pr], by: coords[2 * pr + 1],
+                                   cx: coords[2 * pl], cy: coords[2 * pl + 1],
+                                   px: coords[2 * p1], py: coords[2 * p1 + 1])
+            
+            if illegal {
+                triangles[a] = UInt32(p1)
+                triangles[b] = UInt32(p0)
+                
+                let hbl = halfedges[bl]
+                
+                // Continuing legalize function...
+                if hbl == -1 {
+                    var e = Int(_hullStart)
+                    repeat {
+                        if _hullTri[e] == UInt32(bl) {
+                            _hullTri[e] = UInt32(a)
+                            break
+                        }
+                        e = Int(_hullPrev[e])
+                    } while e != Int(_hullStart)
+                }
+                
+                link(a: a, b: Int(hbl))
+                link(a: b, b: Int(halfedges[ar]))
+                link(a: ar, b: bl)
+                
+                let br = b0 + (b + 1) % 3
+                
+                if i < EDGE_STACK.count {
+                    EDGE_STACK[i] = UInt32(br)
+                    i += 1
+                }
+            } else {
+                if i == 0 { break }
+                i -= 1
+                a = Int(EDGE_STACK[i])
+            }
         }
-
-        // Early break if circle is too far to the left
-        if dx < 0 && dxSquared > circle.rsqr {
-            break
-        }
-
-        let dy = currentPoint.y - circle.y
-        let distanceSquared = dxSquared + dy * dy
-
-        if distanceSquared <= circle.rsqr {
-            removeIndices.append(index)
-            processEdges(&edges, circle: circle)
-        }
-
-        index += 1
+        
+        return UInt32(ar)
     }
-
-    // Remove circles that are no longer needed
-    for i in removeIndices.reversed() {
-        context.open.remove(at: i)
-    }
-
-    // Insert new circumcircles, maintaining the sorted order
-    for edge in edges {
-        let newCircle = fastCircumcircle(edge.point1, edge.point2, currentPoint)
-        insertCircleIntoOpen(&context.open, newCircle)
-    }
-
-    // Update the context's edge pool
-    context.edgePool = edges
-
-    let endTime = DispatchTime.now()
-    // Accumulate time per processPoint call in milliseconds
-    context.totalProcessPointTime += Double(endTime.uptimeNanoseconds - startTime.uptimeNanoseconds) * 1e-6
-}
-
-// MARK: - Main Triangulation
-
-public func triangulate(_ inputPoints: [DPoint]) -> [DTriangle] {
-    var processTimes = [String: Double]()
-    let totalStartTime = DispatchTime.now()
-
-    guard inputPoints.count >= 3 else {
-        processTimes["Total"] = 0
-        print(processTimes)
-        return []
-    }
-
-    // Measure time for removing duplicates and collecting points
-    let startTime1 = DispatchTime.now()
-    let context = TriangulationContext(capacity: inputPoints.count)
-    var uniquePoints = [DPoint]()
-    var index = 0
-
-    // Remove duplicates and collect points
-    var seen = Set<DPoint>(minimumCapacity: inputPoints.count)
-    for point in inputPoints {
-        let pointWithIndex = DPoint(x: point.x, y: point.y, index: index)
-        if seen.insert(pointWithIndex).inserted {
-            uniquePoints.append(pointWithIndex)
-            index += 1
+    
+    private func link(a: Int, b: Int) {
+        halfedges[a] = Int32(b)
+        if b != -1 {
+            halfedges[b] = Int32(a)
         }
     }
-    let endTime1 = DispatchTime.now()
-    processTimes["Removing Duplicates"] = Double(endTime1.uptimeNanoseconds - startTime1.uptimeNanoseconds) * 1e-6
-
-    guard uniquePoints.count >= 3 else {
-        processTimes["Total"] = Double(DispatchTime.now().uptimeNanoseconds - totalStartTime.uptimeNanoseconds) * 1e-6
-        print(processTimes)
-        return []
+    
+    private func addTriangle(i0: UInt32, i1: UInt32, i2: UInt32,
+                             a: Int32, b: Int32, c: Int32) -> Int {
+        let t = trianglesLen
+        
+        triangles[t] = i0
+        triangles[t + 1] = i1
+        triangles[t + 2] = i2
+        
+        link(a: t, b: Int(a))
+        link(a: t + 1, b: Int(b))
+        link(a: t + 2, b: Int(c))
+        
+        trianglesLen += 3
+        return t
     }
-
-    // Measure time for sorting points
-    let startTime2 = DispatchTime.now()
-    // Sort points by x-coordinate
-    uniquePoints.sort { $0.x < $1.x }
-    let endTime2 = DispatchTime.now()
-    processTimes["Sorting Points"] = Double(endTime2.uptimeNanoseconds - startTime2.uptimeNanoseconds) * 1e-6
-
-    // Measure time for calculating supertriangle bounds
-    let startTime3 = DispatchTime.now()
-    // Calculate supertriangle bounds
-    let xs = uniquePoints.map { $0.x }
-    let ys = uniquePoints.map { $0.y }
-    let xmin = xs.min()!
-    let xmax = xs.max()!
-    let ymin = ys.min()!
-    let ymax = ys.max()!
-    let dx = xmax - xmin
-    let dy = ymax - ymin
-    let dmax = max(dx, dy)
-    let midx = (xmax + xmin) / 2
-    let midy = (ymax + ymin) / 2
-    let margin = dmax * 20
-    let endTime3 = DispatchTime.now()
-    processTimes["Calculating Supertriangle Bounds"] = Double(endTime3.uptimeNanoseconds - startTime3.uptimeNanoseconds) * 1e-6
-
-    // Measure time for creating supertriangle points
-    let startTime4 = DispatchTime.now()
-    // Create supertriangle points
-    let superTrianglePoints = [
-        DPoint(x: midx - margin, y: midy - dmax, index: -1),
-        DPoint(x: midx, y: midy + margin, index: -2),
-        DPoint(x: midx + margin, y: midy - dmax, index: -3)
-    ]
-    let endTime4 = DispatchTime.now()
-    processTimes["Creating Supertriangle Points"] = Double(endTime4.uptimeNanoseconds - startTime4.uptimeNanoseconds) * 1e-6
-
-    // Measure time for combining points
-    let startTime5 = DispatchTime.now()
-    // Combine uniquePoints and superTrianglePoints to form context.points
-    context.points = uniquePoints + superTrianglePoints
-    let endTime5 = DispatchTime.now()
-    processTimes["Combining Points"] = Double(endTime5.uptimeNanoseconds - startTime5.uptimeNanoseconds) * 1e-6
-
-    // Measure time for initializing with supertriangle
-    let startTime6 = DispatchTime.now()
-    // Initialize with supertriangle
-    let superTriangleStartIndex = context.points.count - 3
-    let initialCircle = fastCircumcircle(
-        context.points[superTriangleStartIndex],
-        context.points[superTriangleStartIndex + 1],
-        context.points[superTriangleStartIndex + 2]
-    )
-    context.open.append(initialCircle)
-    let endTime6 = DispatchTime.now()
-    processTimes["Initializing Supertriangle"] = Double(endTime6.uptimeNanoseconds - startTime6.uptimeNanoseconds) * 1e-6
-
-    // Measure time for processing points
-    let startTime7 = DispatchTime.now()
-    // Process points
-    for point in uniquePoints {
-        processPoint(context: context, currentPoint: point)
+    
+    private func pseudoAngle(dx: Double, dy: Double) -> Double {
+        let p = dx / (abs(dx) + abs(dy))
+        return (dy > 0 ? 3 - p : 1 + p) / 4
     }
-    let endTime7 = DispatchTime.now()
-    processTimes["Processing Points"] = Double(endTime7.uptimeNanoseconds - startTime7.uptimeNanoseconds) * 1e-6
-
-    // Add the total time spent in processPoint function
-    processTimes["ProcessPoint Total Time"] = context.totalProcessPointTime
-
-    // Measure time for collecting open and completed triangles
-    let startTime8 = DispatchTime.now()
-    // Add remaining open triangles to completed set
-    context.completed.formUnion(context.open)
-    let endTime8 = DispatchTime.now()
-    processTimes["Collecting Triangles"] = Double(endTime8.uptimeNanoseconds - startTime8.uptimeNanoseconds) * 1e-6
-
-    // Measure time for preparing final result
-    let startTime9 = DispatchTime.now()
-    // Prepare final result
-    var result = [DTriangle]()
-    result.reserveCapacity(context.completed.count)
-
-    // Filter out triangles that include supertriangle points
-    for circle in context.completed {
-        if circle.point1.index >= 0 && circle.point2.index >= 0 && circle.point3.index >= 0 {
-            result.append(DTriangle(
-                point1: circle.point1,
-                point2: circle.point2,
-                point3: circle.point3
-            ))
+    
+    private func dist(ax: Double, ay: Double, bx: Double, by: Double) -> Double {
+        let dx = ax - bx
+        let dy = ay - by
+        return dx * dx + dy * dy
+    }
+    
+    private func orient2d(ax: Double, ay: Double,
+                          bx: Double, by: Double,
+                          cx: Double, cy: Double) -> Double {
+        return (by - ay) * (cx - bx) - (bx - ax) * (cy - by)
+    }
+    
+    private func inCircle(ax: Double, ay: Double,
+                          bx: Double, by: Double,
+                          cx: Double, cy: Double,
+                          px: Double, py: Double) -> Bool {
+        let dx = ax - px
+        let dy = ay - py
+        let ex = bx - px
+        let ey = by - py
+        let fx = cx - px
+        let fy = cy - py
+        
+        let ap = dx * dx + dy * dy
+        let bp = ex * ex + ey * ey
+        let cp = fx * fx + fy * fy
+        
+        return dx * (ey * cp - bp * fy) -
+        dy * (ex * cp - bp * fx) +
+        ap * (ex * fy - ey * fx) < 0
+    }
+    
+    private func circumradius(ax: Double, ay: Double,
+                              bx: Double, by: Double,
+                              cx: Double, cy: Double) -> Double {
+        let dx = bx - ax
+        let dy = by - ay
+        let ex = cx - ax
+        let ey = cy - ay
+        
+        let bl = dx * dx + dy * dy
+        let cl = ex * ex + ey * ey
+        let d = 0.5 / (dx * ey - dy * ex)
+        
+        let x = (ey * bl - dy * cl) * d
+        let y = (dx * cl - ex * bl) * d
+        
+        return x * x + y * y
+    }
+    
+    private func circumcenter(ax: Double, ay: Double,
+                              bx: Double, by: Double,
+                              cx: Double, cy: Double) -> Point {
+        let dx = bx - ax
+        let dy = by - ay
+        let ex = cx - ax
+        let ey = cy - ay
+        
+        let bl = dx * dx + dy * dy
+        let cl = ex * ex + ey * ey
+        let d = 0.5 / (dx * ey - dy * ex)
+        
+        let x = ax + (ey * bl - dy * cl) * d
+        let y = ay + (dx * cl - ex * bl) * d
+        
+        return Point(x: x, y: y)
+    }
+    
+    private func quicksort(ids: inout [UInt32], dists: [Double],
+                           left: Int, right: Int) {
+        if right <= left {
+            return
+        }
+        
+        if right - left <= 20 {
+            // Insertion sort for small subarrays
+            for i in (left + 1)...right {
+                let temp = ids[i]
+                let tempDist = dists[Int(temp)]
+                var j = i - 1
+                while j >= left && dists[Int(ids[j])] > tempDist {
+                    ids[j + 1] = ids[j]
+                    j -= 1
+                }
+                ids[j + 1] = temp
+            }
+            return
+        }
+        
+        // Regular quicksort for larger arrays
+        let median = (left + right) >> 1
+        var i = left + 1
+        var j = right
+        
+        swap(arr: &ids, i: median, j: i)
+        
+        if dists[Int(ids[left])] > dists[Int(ids[right])] {
+            swap(arr: &ids, i: left, j: right)
+        }
+        if dists[Int(ids[i])] > dists[Int(ids[right])] {
+            swap(arr: &ids, i: i, j: right)
+        }
+        if dists[Int(ids[left])] > dists[Int(ids[i])] {
+            swap(arr: &ids, i: left, j: i)
+        }
+        
+        let temp = ids[i]
+        let tempDist = dists[Int(temp)]
+        
+        while true {
+            repeat { i += 1 } while i <= right && dists[Int(ids[i])] < tempDist
+            repeat { j -= 1 } while j >= left && dists[Int(ids[j])] > tempDist
+            if j < i { break }
+            swap(arr: &ids, i: i, j: j)
+        }
+        
+        ids[left + 1] = ids[j]
+        ids[j] = temp
+        
+        // Ensure the recursive calls have valid ranges
+        if j > left {
+            quicksort(ids: &ids, dists: dists, left: left, right: j - 1)
+        }
+        if j + 1 < right {
+            quicksort(ids: &ids, dists: dists, left: j + 1, right: right)
         }
     }
-    let endTime9 = DispatchTime.now()
-    processTimes["Preparing Final Result"] = Double(endTime9.uptimeNanoseconds - startTime9.uptimeNanoseconds) * 1e-6
-
-    let totalEndTime = DispatchTime.now()
-    processTimes["Total"] = Double(totalEndTime.uptimeNanoseconds - totalStartTime.uptimeNanoseconds) * 1e-6
-
-    // Print the process times in milliseconds
-    print("Process Times (ms):", processTimes)
-
-    return result
+    
+    private func swap(arr: inout [UInt32], i: Int, j: Int) {
+        let tmp = arr[i]
+        arr[i] = arr[j]
+        arr[j] = tmp
+    }
 }
