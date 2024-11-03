@@ -5,7 +5,7 @@ import simd
 typealias DPoint = SIMD2<Double>
 
 struct Point {
-    let coords: DPoint
+    public let coords: DPoint
     
     init(_ coords: DPoint) {
         self.coords = coords
@@ -76,7 +76,6 @@ class CachedDelaunator {
             let n = pointsPtr.count
             currentPointCount = n
             
-            // Copy coordinates to cache
             cache.coords.withUnsafeMutableBufferPointer { coordsPtr in
                 for i in 0..<n {
                     let point = pointsPtr[i]
@@ -110,60 +109,60 @@ class CachedDelaunator {
             maxY = max(maxY, y)
         }
         
-        let c = DPoint((minX + maxX) / 2, (minY + maxY) / 2)
+        var center = DPoint((minX + maxX) / 2, (minY + maxY) / 2)
         
-        // Find initial point
-        var i0 = 0
+        // Find first vertex
+        var firstIdx = 0
         var minDist = Double.infinity
         
         for i in 0..<n {
-            let d = squaredDistance(c, DPoint(cache.coords[2 * i], cache.coords[2 * i + 1]))
-            if d < minDist {
-                i0 = i
-                minDist = d
+            let dist = squaredDistance(center, DPoint(cache.coords[2 * i], cache.coords[2 * i + 1]))
+            if dist < minDist {
+                firstIdx = i
+                minDist = dist
             }
         }
         
-        let i0p = DPoint(cache.coords[2 * i0], cache.coords[2 * i0 + 1])
+        let first = DPoint(cache.coords[2 * firstIdx], cache.coords[2 * firstIdx + 1])
         
         // Initialize ids array
         for i in 0..<n {
             cache.ids[i] = UInt(i)
         }
         
-        // Find second point
-        var i1 = 0
+        // Find second vertex
+        var secondIdx = 0
         minDist = Double.infinity
         
         for i in 0..<n {
-            if i == i0 { continue }
-            let d = squaredDistance(i0p, DPoint(cache.coords[2 * i], cache.coords[2 * i + 1]))
-            if d < minDist && d > 0 {
-                i1 = i
-                minDist = d
+            if i == firstIdx { continue }
+            let dist = squaredDistance(first, DPoint(cache.coords[2 * i], cache.coords[2 * i + 1]))
+            if dist < minDist && dist > 0 {
+                secondIdx = i
+                minDist = dist
             }
         }
         
-        var triangle = DTriangle(
-            i0: i0,
-            i1: i1,
+        var tri = DTriangle(
+            i0: firstIdx,
+            i1: secondIdx,
             i2: 0,
-            p0: i0p,
-            p1: DPoint(cache.coords[2 * i1], cache.coords[2 * i1 + 1]),
+            p0: first,
+            p1: DPoint(cache.coords[2 * secondIdx], cache.coords[2 * secondIdx + 1]),
             p2: DPoint(0, 0)
         )
         
-        // Find third point
+        // Find third vertex
         var minRadius = Double.infinity
-        var i2 = 0
+        var thirdIdx = 0
         
         for i in 0..<n {
-            if i == triangle.i0 || i == triangle.i1 { continue }
-            let p = DPoint(cache.coords[2 * i], cache.coords[2 * i + 1])
-            let r = circumradius(triangle.p0, triangle.p1, p)
-            if r < minRadius {
-                i2 = i
-                minRadius = r
+            if i == tri.i0 || i == tri.i1 { continue }
+            let point = DPoint(cache.coords[2 * i], cache.coords[2 * i + 1])
+            let radius = circumradius(tri.p0, tri.p1, point)
+            if radius < minRadius {
+                thirdIdx = i
+                minRadius = radius
             }
         }
         
@@ -172,63 +171,66 @@ class CachedDelaunator {
             return
         }
         
-        triangle.i2 = i2
-        triangle.p2 = DPoint(cache.coords[2 * i2], cache.coords[2 * i2 + 1])
+        tri.i2 = thirdIdx
+        tri.p2 = DPoint(cache.coords[2 * thirdIdx], cache.coords[2 * thirdIdx + 1])
         
-        if orient2d(triangle.p0, triangle.p1, triangle.p2) < 0 {
-            let tempI = triangle.i1
-            let tempP = triangle.p1
-            triangle.i1 = triangle.i2
-            triangle.p1 = triangle.p2
-            triangle.i2 = tempI
-            triangle.p2 = tempP
+        if orient2d(tri.p0, tri.p1, tri.p2) < 0 {
+            let temp = tri.i1
+            let tempPoint = tri.p1
+            tri.i1 = tri.i2
+            tri.p1 = tri.p2
+            tri.i2 = temp
+            tri.p2 = tempPoint
         }
         
-        center = circumcenter(triangle.p0, triangle.p1, triangle.p2).coords
+        center = circumcenter(tri.p0, tri.p1, tri.p2).coords
         
         // Calculate distances
         for i in 0..<n {
-            cache.dists[i] = squaredDistance(DPoint(cache.coords[2 * i],
-                                                    cache.coords[2 * i + 1]), center)
+            cache.dists[i] = squaredDistance(
+                DPoint(cache.coords[2 * i], cache.coords[2 * i + 1]),
+                center
+            )
         }
         
         quicksort(ids: &cache.ids, dists: cache.dists, left: 0, right: n - 1)
         
-        cache.hullStart = UInt(triangle.i0)
+        // Hull initialization
+        cache.hullStart = UInt(tri.i0)
         var hullSize = 3
         
-        cache.hullNext[triangle.i0] = UInt(triangle.i1)
-        cache.hullPrev[triangle.i2] = UInt(triangle.i1)
-        cache.hullNext[triangle.i1] = UInt(triangle.i2)
-        cache.hullPrev[triangle.i0] = UInt(triangle.i2)
-        cache.hullNext[triangle.i2] = UInt(triangle.i0)
-        cache.hullPrev[triangle.i1] = UInt(triangle.i0)
+        cache.hullNext[tri.i0] = UInt(tri.i1)
+        cache.hullPrev[tri.i2] = UInt(tri.i1)
+        cache.hullNext[tri.i1] = UInt(tri.i2)
+        cache.hullPrev[tri.i0] = UInt(tri.i2)
+        cache.hullNext[tri.i2] = UInt(tri.i0)
+        cache.hullPrev[tri.i1] = UInt(tri.i0)
         
-        cache.hullTri[triangle.i0] = 0
-        cache.hullTri[triangle.i1] = 1
-        cache.hullTri[triangle.i2] = 2
+        cache.hullTri[tri.i0] = 0
+        cache.hullTri[tri.i1] = 1
+        cache.hullTri[tri.i2] = 2
         
-        cache.hullHash[hashKey(triangle.p0)] = triangle.i0
-        cache.hullHash[hashKey(triangle.p1)] = triangle.i1
-        cache.hullHash[hashKey(triangle.p2)] = triangle.i2
+        cache.hullHash[hashKey(tri.p0)] = tri.i0
+        cache.hullHash[hashKey(tri.p1)] = tri.i1
+        cache.hullHash[hashKey(tri.p2)] = tri.i2
         
         trianglesLen = 0
-        _ = addTriangle(i0: UInt(triangle.i0), i1: UInt(triangle.i1), i2: UInt(triangle.i2),
+        _ = addTriangle(i0: UInt(tri.i0), i1: UInt(tri.i1), i2: UInt(tri.i2),
                         a: -1, b: -1, c: -1)
         
-        var xp = Double.infinity
-        var yp = Double.infinity
+        var prevX = Double.infinity
+        var prevY = Double.infinity
         
         for k in 0..<n {
             let i = Int(cache.ids[k])
             let x = cache.coords[2 * i]
             let y = cache.coords[2 * i + 1]
             
-            if k > 0 && abs(x - xp) <= EPSILON && abs(y - yp) <= EPSILON { continue }
-            xp = x
-            yp = y
+            if k > 0 && abs(x - prevX) <= EPSILON && abs(y - prevY) <= EPSILON { continue }
+            prevX = x
+            prevY = y
             
-            if i == triangle.i0 || i == triangle.i1 || i == triangle.i2 { continue }
+            if i == tri.i0 || i == tri.i1 || i == tri.i2 { continue }
             
             var start = 0
             let key = hashKey(DPoint(x, y))
@@ -239,71 +241,71 @@ class CachedDelaunator {
             }
             
             start = Int(cache.hullPrev[start])
-            var e = start
+            var edge = start
             
             while true {
-                let q = Int(cache.hullNext[e])
+                let next = Int(cache.hullNext[edge])
                 if orient2d(DPoint(x, y),
-                            DPoint(cache.coords[2 * e], cache.coords[2 * e + 1]),
-                            DPoint(cache.coords[2 * q], cache.coords[2 * q + 1])) < 0 { break }
-                e = q
-                if e == start {
-                    e = -1
+                            DPoint(cache.coords[2 * edge], cache.coords[2 * edge + 1]),
+                            DPoint(cache.coords[2 * next], cache.coords[2 * next + 1])) < 0 { break }
+                edge = next
+                if edge == start {
+                    edge = -1
                     break
                 }
             }
             
-            if e == -1 { continue }
+            if edge == -1 { continue }
             
-            var t = addTriangle(i0: UInt(e), i1: UInt(i), i2: cache.hullNext[e],
-                                a: -1, b: -1, c: Int32(cache.hullTri[e]))
+            var t = addTriangle(i0: UInt(edge), i1: UInt(i), i2: cache.hullNext[edge],
+                                a: -1, b: -1, c: Int32(cache.hullTri[edge]))
             
-            cache.hullTri[i] = legalize(a: t + 2)
-            cache.hullTri[e] = UInt(t)
+            cache.hullTri[i] = legalize(edge: t + 2)
+            cache.hullTri[edge] = UInt(t)
             hullSize += 1
             
-            var n = Int(cache.hullNext[e])
+            var next = Int(cache.hullNext[edge])
             while true {
-                let q = Int(cache.hullNext[n])
+                let nextNext = Int(cache.hullNext[next])
                 if orient2d(DPoint(x, y),
-                            DPoint(cache.coords[2 * n], cache.coords[2 * n + 1]),
-                            DPoint(cache.coords[2 * q], cache.coords[2 * q + 1])) >= 0 { break }
+                            DPoint(cache.coords[2 * next], cache.coords[2 * next + 1]),
+                            DPoint(cache.coords[2 * nextNext], cache.coords[2 * nextNext + 1])) >= 0 { break }
                 
-                t = addTriangle(i0: UInt(n), i1: UInt(i), i2: UInt(q),
-                                a: Int32(cache.hullTri[i]), b: -1, c: Int32(cache.hullTri[n]))
+                t = addTriangle(i0: UInt(next), i1: UInt(i), i2: UInt(nextNext),
+                                a: Int32(cache.hullTri[i]), b: -1, c: Int32(cache.hullTri[next]))
                 
-                cache.hullTri[i] = legalize(a: t + 2)
-                cache.hullNext[n] = UInt(n)
+                cache.hullTri[i] = legalize(edge: t + 2)
+                cache.hullNext[next] = UInt(next)
                 hullSize -= 1
-                n = q
+                next = nextNext
             }
             
-            if e == start {
+            if edge == start {
                 while true {
-                    let q = Int(cache.hullPrev[e])
+                    let prev = Int(cache.hullPrev[edge])
                     if orient2d(DPoint(x, y),
-                                DPoint(cache.coords[2 * q], cache.coords[2 * q + 1]),
-                                DPoint(cache.coords[2 * e], cache.coords[2 * e + 1])) >= 0 { break }
+                                DPoint(cache.coords[2 * prev], cache.coords[2 * prev + 1]),
+                                DPoint(cache.coords[2 * edge], cache.coords[2 * edge + 1])) >= 0 { break }
                     
-                    t = addTriangle(i0: UInt(q), i1: UInt(i), i2: UInt(e),
-                                    a: -1, b: Int32(cache.hullTri[e]), c: Int32(cache.hullTri[q]))
+                    t = addTriangle(i0: UInt(prev), i1: UInt(i), i2: UInt(edge),
+                                    a: -1, b: Int32(cache.hullTri[edge]), c: Int32(cache.hullTri[prev]))
                     
-                    _ = legalize(a: t + 2)
-                    cache.hullTri[q] = UInt(t)
-                    cache.hullNext[e] = UInt(e)
+                    _ = legalize(edge: t + 2)
+                    cache.hullTri[prev] = UInt(t)
+                    cache.hullNext[edge] = UInt(edge)
                     hullSize -= 1
-                    e = q
+                    edge = prev
                 }
             }
             
-            cache.hullPrev[i] = UInt(e)
-            cache.hullStart = UInt(e)
-            cache.hullNext[e] = UInt(i)
-            cache.hullPrev[n] = UInt(i)
-            cache.hullNext[i] = UInt(n)
+            cache.hullPrev[i] = UInt(edge)
+            cache.hullStart = UInt(edge)
+            cache.hullNext[edge] = UInt(i)
+            cache.hullPrev[next] = UInt(i)
+            cache.hullNext[i] = UInt(next)
             
             cache.hullHash[hashKey(DPoint(x, y))] = i
-            cache.hullHash[hashKey(DPoint(cache.coords[2 * e], cache.coords[2 * e + 1]))] = e
+            cache.hullHash[hashKey(DPoint(cache.coords[2 * edge], cache.coords[2 * edge + 1]))] = edge
         }
         
         cache.hull.withUnsafeMutableBufferPointer { hullPtr in
@@ -340,52 +342,50 @@ class CachedDelaunator {
     }
     
     private func quicksort(ids: inout [UInt], dists: [Double], left: Int, right: Int) {
-        if left >= right { return }  // Add this check first
+        if left >= right { return }
         
         if right - left <= 20 {
-            // Use insertion sort for small arrays
-            for i in (left + 1)...right {
-                let temp = ids[i]
-                let tempDist = dists[Int(temp)]
-                var j = i - 1
-                while j >= left && dists[Int(ids[j])] > tempDist {
-                    ids[j + 1] = ids[j]
-                    j -= 1
+            for curr in (left + 1)...right {
+                let tmp = ids[curr]
+                let tmpDist = dists[Int(tmp)]
+                var prev = curr - 1
+                while prev >= left && dists[Int(ids[prev])] > tmpDist {
+                    ids[prev + 1] = ids[prev]
+                    prev -= 1
                 }
-                ids[j + 1] = temp
+                ids[prev + 1] = tmp
             }
             return
         }
         
-        let median = (left + right) >> 1
+        let mid = (left + right) >> 1
         var i = left + 1
         var j = right
-        swap(arr: &ids, i: median, j: i)
+        swap(arr: &ids, index1: mid, index2: i)
         
         if dists[Int(ids[left])] > dists[Int(ids[right])] {
-            swap(arr: &ids, i: left, j: right)
+            swap(arr: &ids, index1: left, index2: right)
         }
         if dists[Int(ids[i])] > dists[Int(ids[right])] {
-            swap(arr: &ids, i: i, j: right)
+            swap(arr: &ids, index1: i, index2: right)
         }
         if dists[Int(ids[left])] > dists[Int(ids[i])] {
-            swap(arr: &ids, i: left, j: i)
+            swap(arr: &ids, index1: left, index2: i)
         }
         
-        let temp = ids[i]
-        let tempDist = dists[Int(temp)]
+        let tmp = ids[i]
+        let tmpDist = dists[Int(tmp)]
         
         while true {
-            repeat { i += 1 } while i <= right && dists[Int(ids[i])] < tempDist  // Add bounds check
-            repeat { j -= 1 } while j >= left && dists[Int(ids[j])] > tempDist   // Add bounds check
+            repeat { i += 1 } while i <= right && dists[Int(ids[i])] < tmpDist
+            repeat { j -= 1 } while j >= left && dists[Int(ids[j])] > tmpDist
             if j < i { break }
-            swap(arr: &ids, i: i, j: j)
+            swap(arr: &ids, index1: i, index2: j)
         }
         
         ids[left + 1] = ids[j]
-        ids[j] = temp
+        ids[j] = tmp
         
-        // Recursively sort the smaller partition first
         if right - j < j - left {
             quicksort(ids: &ids, dists: dists, left: j + 1, right: right)
             quicksort(ids: &ids, dists: dists, left: left, right: j - 1)
@@ -395,82 +395,75 @@ class CachedDelaunator {
         }
     }
     
-    @inline(__always)
-    private func swap(arr: inout [UInt], i: Int, j: Int) {
-        let tmp = arr[i]
-        arr[i] = arr[j]
-        arr[j] = tmp
-    }
-    
-    private func legalize(a: Int) -> UInt {
-        var i = 0
-        var ar = 0
-        var a = a
+    private func legalize(edge: Int) -> UInt {
+        var stackPos = 0
+        var result = 0
+        var curr = edge
         
         while true {
-            let b = cache.halfedges[a]
+            let opposite = cache.halfedges[curr]
             
-            if b == -1 {
-                if i == 0 { break }
-                a = Int(EDGE_STACK[i - 1])
-                i -= 1
+            if opposite == -1 {
+                if stackPos == 0 { break }
+                curr = Int(EDGE_STACK[stackPos - 1])
+                stackPos -= 1
                 continue
             }
             
-            let a0 = a - a % 3
-            ar = a0 + (a + 2) % 3
+            let triStart = curr - curr % 3
+            result = triStart + (curr + 2) % 3
             
-            let b0 = b - b % 3
-            let al = a0 + (a + 1) % 3
-            let bl = b0 + (b + 2) % 3
+            let oppTriStart = opposite - opposite % 3
+            let adjLeft = triStart + (curr + 1) % 3
+            let oppLeft = oppTriStart + (opposite + 2) % 3
             
-            let p0 = Int(cache.triangles[ar])
-            let pr = Int(cache.triangles[a])
-            let pl = Int(cache.triangles[al])
-            let p1 = Int(cache.triangles[bl])
+            let v0 = Int(cache.triangles[result])
+            let v1 = Int(cache.triangles[curr])
+            let v2 = Int(cache.triangles[adjLeft])
+            let v3 = Int(cache.triangles[oppLeft])
             
             let illegal = inCircle(
-                DPoint(cache.coords[2 * p0], cache.coords[2 * p0 + 1]),
-                DPoint(cache.coords[2 * pr], cache.coords[2 * pr + 1]),
-                DPoint(cache.coords[2 * pl], cache.coords[2 * pl + 1]),
-                DPoint(cache.coords[2 * p1], cache.coords[2 * p1 + 1])
+                DPoint(cache.coords[2 * v0], cache.coords[2 * v0 + 1]),
+                DPoint(cache.coords[2 * v1], cache.coords[2 * v1 + 1]),
+                DPoint(cache.coords[2 * v2], cache.coords[2 * v2 + 1]),
+                DPoint(cache.coords[2 * v3], cache.coords[2 * v3 + 1])
             )
             
             if illegal {
-                cache.triangles[a] = UInt(p1)
-                cache.triangles[b] = UInt(p0)
+                cache.triangles[curr] = UInt(v3)
+                cache.triangles[opposite] = UInt(v0)
                 
-                let hbl = cache.halfedges[bl]
+                let oppHull = cache.halfedges[oppLeft]
                 
-                if hbl == -1 {
+                if oppHull == -1 {
                     var e = Int(cache.hullStart)
                     repeat {
-                        if cache.hullTri[e] == UInt(bl) {
-                            cache.hullTri[e] = UInt(a)
+                        if cache.hullTri[e] == UInt(oppLeft) {
+                            cache.hullTri[e] = UInt(curr)
                             break
                         }
                         e = Int(cache.hullPrev[e])
                     } while e != Int(cache.hullStart)
                 }
                 
-                link(a: a, b: Int(hbl))
-                link(a: b, b: cache.halfedges[ar])
-                link(a: ar, b: bl)
+                link(a: curr, b: Int(oppHull))
+                link(a: opposite, b: cache.halfedges[result])
+                link(a: result, b: oppLeft)
                 
-                let br = b0 + (b + 1) % 3
+                let nextEdge = oppTriStart + (opposite + 1) % 3
                 
-                if i < EDGE_STACK.count {
-                    EDGE_STACK[i] = UInt(br)
-                    i += 1
+                if stackPos < EDGE_STACK.count {
+                    EDGE_STACK[stackPos] = UInt(nextEdge)
+                    stackPos += 1
                 }
             } else {
-                if i == 0 { break }
-                i -= 1
-                a = Int(EDGE_STACK[i])
+                if stackPos == 0 { break }
+                stackPos -= 1
+                curr = Int(EDGE_STACK[stackPos])
             }
         }
         
-        return UInt(ar)
+        return UInt(result)
     }
     
     private func link(a: Int, b: Int) {
@@ -495,84 +488,88 @@ class CachedDelaunator {
         return t
     }
     
-    @inline(__always)
-    private func hashKey(_ coords: DPoint) -> Int {
-        let angle = pseudoAngle(d: coords - center)
+    private func hashKey(_ p: DPoint) -> Int {
+        let angle = pseudoAngle(delta: p - center)
         return Int(floor(Double(angle) * Double(cache.hullHash.count))) % cache.hullHash.count
     }
     
-    @inline(__always)
-    private func pseudoAngle(d: DPoint) -> Double {
-        let abs_d = abs(d)
-        let sum = abs_d.x + abs_d.y
-        guard sum != 0 else { return 0 }
-        let p = d.x / sum
-        return (d.y > 0 ? 3 - p : 1 + p) / 4
+    private func pseudoAngle(delta: DPoint) -> Double {
+        let magnitude = abs(delta)
+        let manhattanDist = magnitude.x + magnitude.y
+        guard manhattanDist != 0 else { return 0 }
+        let normalizedX = delta.x / manhattanDist
+        return (delta.y > 0 ? 3 - normalizedX : 1 + normalizedX) / 4
     }
-    
+
     @inline(__always)
-    private func squaredDistance(_ a: DPoint, _ b: DPoint) -> Double {
-        return simd_distance_squared(a, b)
+    private func squaredDistance(_ point1: DPoint, _ point2: DPoint) -> Double {
+        return simd_distance_squared(point1, point2)
     }
-    
+
     @inline(__always)
-    private func orient2d(_ a: DPoint, _ b: DPoint, _ c: DPoint) -> Double {
-        let ab = b - a
-        let bc = c - b
-        return ab.y * bc.x - ab.x * bc.y
+    private func orient2d(_ vertex1: DPoint, _ vertex2: DPoint, _ vertex3: DPoint) -> Double {
+        let edge1 = vertex2 - vertex1  // First edge vector
+        let edge2 = vertex3 - vertex2  // Second edge vector
+        return edge1.y * edge2.x - edge1.x * edge2.y  // Cross product z component
     }
-    
+
     @inline(__always)
-    private func inCircle(_ a: DPoint, _ b: DPoint, _ c: DPoint, _ p: DPoint) -> Bool {
-        let ap = a - p
-        let bp = b - p
-        let cp = c - p
+    private func inCircle(_ vertex1: DPoint, _ vertex2: DPoint, _ vertex3: DPoint, _ test: DPoint) -> Bool {
+        let vec1 = vertex1 - test
+        let vec2 = vertex2 - test
+        let vec3 = vertex3 - test
         
-        let ap_sq = simd_dot(ap, ap)
-        let bp_sq = simd_dot(bp, bp)
-        let cp_sq = simd_dot(cp, cp)
+        let sqDist1 = simd_dot(vec1, vec1)
+        let sqDist2 = simd_dot(vec2, vec2)
+        let sqDist3 = simd_dot(vec3, vec3)
         
-        let m = SIMD3<Double>(
-            ap_sq * simd_cross(bp, cp).z,
-            bp_sq * simd_cross(cp, ap).z,
-            cp_sq * simd_cross(ap, bp).z
+        let determinants = SIMD3<Double>(
+            sqDist1 * simd_cross(vec2, vec3).z,
+            sqDist2 * simd_cross(vec3, vec1).z,
+            sqDist3 * simd_cross(vec1, vec2).z
         )
-        return simd_reduce_add(m) < 0
+        return simd_reduce_add(determinants) < 0
     }
-    
+
     @inline(__always)
-    private func circumcenter(_ a: DPoint, _ b: DPoint, _ c: DPoint) -> Point {
-        let ab = b - a
-        let ac = c - a
+    private func circumcenter(_ vertex1: DPoint, _ vertex2: DPoint, _ vertex3: DPoint) -> Point {
+        let edge1 = vertex2 - vertex1
+        let edge2 = vertex3 - vertex1
         
-        let bl = simd_dot(ab, ab)
-        let cl = simd_dot(ac, ac)
+        let sqLen1 = simd_dot(edge1, edge1)
+        let sqLen2 = simd_dot(edge2, edge2)
         
-        let d = 0.5 / simd_cross(ab, ac).z
+        let perpDivisor = 0.5 / simd_cross(edge1, edge2).z
         
-        let coords = a + DPoint(
-            ac.y * bl - ab.y * cl,
-            ab.x * cl - ac.x * bl
-        ) * d
+        let center = vertex1 + DPoint(
+            edge2.y * sqLen1 - edge1.y * sqLen2,
+            edge1.x * sqLen2 - edge2.x * sqLen1
+        ) * perpDivisor
         
-        return Point(coords)
+        return Point(center)
     }
-    
+
     @inline(__always)
-    private func circumradius(_ a: DPoint, _ b: DPoint, _ c: DPoint) -> Double {
-        let ab = b - a
-        let ac = c - a
+    private func circumradius(_ vertex1: DPoint, _ vertex2: DPoint, _ vertex3: DPoint) -> Double {
+        let edge1 = vertex2 - vertex1
+        let edge2 = vertex3 - vertex1
         
-        let bl = simd_dot(ab, ab)
-        let cl = simd_dot(ac, ac)
+        let sqLen1 = simd_dot(edge1, edge1)
+        let sqLen2 = simd_dot(edge2, edge2)
         
-        let d = 0.5 / simd_cross(ab, ac).z
+        let perpDivisor = 0.5 / simd_cross(edge1, edge2).z
         
-        let center = DPoint(
-            ac.y * bl - ab.y * cl,
-            ab.x * cl - ac.x * bl
-        ) * d
+        let centerVec = DPoint(
+            edge2.y * sqLen1 - edge1.y * sqLen2,
+            edge1.x * sqLen2 - edge2.x * sqLen1
+        ) * perpDivisor
         
-        return simd_dot(center, center)
+        return simd_dot(centerVec, centerVec)
+    }
+
+    private func swap(arr: inout [UInt], index1: Int, index2: Int) {
+        let temp = arr[index1]
+        arr[index1] = arr[index2]
+        arr[index2] = temp
     }
 }
