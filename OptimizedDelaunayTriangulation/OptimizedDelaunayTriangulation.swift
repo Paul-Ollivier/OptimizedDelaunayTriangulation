@@ -29,8 +29,7 @@ class Delaunator {
     private var _hullHash: [Int32]
     private var _ids: [UInt32]
     private var _dists: [Double]
-    private var _cx: Double = 0
-    private var _cy: Double = 0
+    private var _center = SIMD2<Double>(0, 0)
     private var _hullStart: UInt32 = 0
     
     static func from(points: [Point]) -> Delaunator {
@@ -82,53 +81,48 @@ class Delaunator {
             _ids[i] = UInt32(i)
         }
         
-        let cx = (minX + maxX) / 2
-        let cy = (minY + maxY) / 2
+        let c = SIMD2<Double>((minX + maxX) / 2, (minY + maxY) / 2)
         
         var i0: Int = 0
         var minDist = Double.infinity
         
         for i in 0..<n {
-            let d = dist(ax: cx, ay: cy, bx: coords[2 * i], by: coords[2 * i + 1])
+            let d = squaredDistance(c, SIMD2<Double>(coords[2 * i], coords[2 * i + 1]))
             if d < minDist {
                 i0 = i
                 minDist = d
             }
         }
         
-        let i0x = coords[2 * i0]
-        let i0y = coords[2 * i0 + 1]
+        let i0p = SIMD2<Double>(coords[2 * i0], coords[2 * i0 + 1])
         
         var i1: Int = 0
         minDist = Double.infinity
         
         for i in 0..<n {
             if i == i0 { continue }
-            let d = dist(ax: i0x, ay: i0y, bx: coords[2 * i], by: coords[2 * i + 1])
+            let d = squaredDistance(i0p, SIMD2<Double>(coords[2 * i], coords[2 * i + 1]))
             if d < minDist && d > 0 {
                 i1 = i
                 minDist = d
             }
         }
         
-        var i1x = coords[2 * i1]
-        var i1y = coords[2 * i1 + 1]
+        var i1p = SIMD2<Double>(coords[2 * i1], coords[2 * i1 + 1])
         
         var minRadius = Double.infinity
         var i2: Int = 0
         
         for i in 0..<n {
             if i == i0 || i == i1 { continue }
-            let r = circumradius(ax: i0x, ay: i0y, bx: i1x, by: i1y,
-                                 cx: coords[2 * i], cy: coords[2 * i + 1])
+            let r = circumradius(i0p, i1p, SIMD2<Double>(coords[2 * i], coords[2 * i + 1]))
             if r < minRadius {
                 i2 = i
                 minRadius = r
             }
         }
         
-        var i2x = coords[2 * i2]
-        var i2y = coords[2 * i2 + 1]
+        var i2p = SIMD2<Double>(coords[2 * i2], coords[2 * i2 + 1])
         
         if minRadius == Double.infinity {
             // Handle collinear points
@@ -157,24 +151,20 @@ class Delaunator {
             return
         }
         
-        if orient2d(ax: i0x, ay: i0y, bx: i1x, by: i1y, cx: i2x, cy: i2y) < 0 {
+        if orient2d(i0p, i1p, i2p) < 0 {
             let i = i1
-            let x = i1x
-            let y = i1y
+            let p = i1p
             i1 = i2
-            i1x = i2x
-            i1y = i2y
+            i1p = i2p
             i2 = i
-            i2x = x
-            i2y = y
+            i2p = p
         }
         
-        let center = circumcenter(ax: i0x, ay: i0y, bx: i1x, by: i1y, cx: i2x, cy: i2y)
-        self._cx = center.coords.x
-        self._cy = center.coords.y
+        let center = circumcenter(i0p, i1p, i2p)
+        self._center = center.coords
         
         for i in 0..<n {
-            _dists[i] = dist(ax: coords[2 * i], ay: coords[2 * i + 1], bx: center.coords.x, by: center.coords.y)
+            _dists[i] = squaredDistance(SIMD2<Double>(coords[2 * i], coords[2 * i + 1]), center.coords)
         }
         
         quicksort(ids: &_ids, dists: _dists, left: 0, right: n - 1)
@@ -194,9 +184,9 @@ class Delaunator {
         _hullTri[i2] = 2
         
         _hullHash = [Int32](repeating: -1, count: _hashSize)
-        _hullHash[hashKey(x: i0x, y: i0y)] = Int32(i0)
-        _hullHash[hashKey(x: i1x, y: i1y)] = Int32(i1)
-        _hullHash[hashKey(x: i2x, y: i2y)] = Int32(i2)
+        _hullHash[hashKey(i0p)] = Int32(i0)
+        _hullHash[hashKey(i1p)] = Int32(i1)
+        _hullHash[hashKey(i2p)] = Int32(i2)
         
         trianglesLen = 0
         _ = addTriangle(i0: UInt32(i0), i1: UInt32(i1), i2: UInt32(i2),
@@ -207,17 +197,16 @@ class Delaunator {
         
         for k in 0..<_ids.count {
             let i = Int(_ids[k])
-            let x = coords[2 * i]
-            let y = coords[2 * i + 1]
+            let p = SIMD2<Double>(coords[2 * i], coords[2 * i + 1])
             
-            if k > 0 && abs(x - xp) <= EPSILON && abs(y - yp) <= EPSILON { continue }
-            xp = x
-            yp = y
+            if k > 0 && abs(p.x - xp) <= EPSILON && abs(p.y - yp) <= EPSILON { continue }
+            xp = p.x
+            yp = p.y
             
             if i == i0 || i == i1 || i == i2 { continue }
             
             var start: Int = 0
-            let key = hashKey(x: x, y: y)
+            let key = hashKey(p)
             
             for j in 0..<_hashSize {
                 start = Int(_hullHash[(key + j) % _hashSize])
@@ -229,9 +218,9 @@ class Delaunator {
             
             while true {
                 let q = Int(_hullNext[e])
-                if orient2d(ax: x, ay: y,
-                            bx: coords[2 * e], by: coords[2 * e + 1],
-                            cx: coords[2 * q], cy: coords[2 * q + 1]) < 0 { break }
+                if orient2d(p,
+                            SIMD2<Double>(coords[2 * e], coords[2 * e + 1]),
+                            SIMD2<Double>(coords[2 * q], coords[2 * q + 1])) < 0 { break }
                 e = q
                 if e == start {
                     e = -1
@@ -252,9 +241,9 @@ class Delaunator {
             var n = Int(_hullNext[e])
             while true {
                 let q = Int(_hullNext[n])
-                if orient2d(ax: x, ay: y,
-                            bx: coords[2 * n], by: coords[2 * n + 1],
-                            cx: coords[2 * q], cy: coords[2 * q + 1]) >= 0 { break }
+                if orient2d(p,
+                            SIMD2<Double>(coords[2 * n], coords[2 * n + 1]),
+                            SIMD2<Double>(coords[2 * q], coords[2 * q + 1])) >= 0 { break }
                 
                 t = addTriangle(i0: UInt32(n), i1: UInt32(i), i2: UInt32(q),
                                 a: Int32(_hullTri[i]), b: -1, c: Int32(_hullTri[n]))
@@ -267,9 +256,9 @@ class Delaunator {
             if e == start {
                 while true {
                     let q = Int(_hullPrev[e])
-                    if orient2d(ax: x, ay: y,
-                                bx: coords[2 * q], by: coords[2 * q + 1],
-                                cx: coords[2 * e], cy: coords[2 * e + 1]) >= 0 { break }
+                    if orient2d(p,
+                                SIMD2<Double>(coords[2 * q], coords[2 * q + 1]),
+                                SIMD2<Double>(coords[2 * e], coords[2 * e + 1])) >= 0 { break }
                     
                     t = addTriangle(i0: UInt32(q), i1: UInt32(i), i2: UInt32(e),
                                     a: -1, b: Int32(_hullTri[e]), c: Int32(_hullTri[q]))
@@ -287,8 +276,8 @@ class Delaunator {
             _hullPrev[n] = UInt32(i)
             _hullNext[i] = UInt32(n)
             
-            _hullHash[hashKey(x: x, y: y)] = Int32(i)
-            _hullHash[hashKey(x: coords[2 * e], y: coords[2 * e + 1])] = Int32(e)
+            _hullHash[hashKey(p)] = Int32(i)
+            _hullHash[hashKey(SIMD2<Double>(coords[2 * e], coords[2 * e + 1]))] = Int32(e)
         }
         
         hull = Array(repeating: 0, count: hullSize)
@@ -307,9 +296,9 @@ class Delaunator {
         }
     }
     
-    // Helper functions remain the same...
-    private func hashKey(x: Double, y: Double) -> Int {
-        let angle = pseudoAngle(dx: x - _cx, dy: y - _cy)
+    @inline(__always)
+    private func hashKey(_ coords: SIMD2<Double>) -> Int {
+        let angle = pseudoAngle(d: coords - _center)
         return Int(floor(Double(angle) * Double(_hashSize))) % _hashSize
     }
     
@@ -340,10 +329,10 @@ class Delaunator {
             let pl = Int(triangles[al])
             let p1 = Int(triangles[bl])
             
-            let illegal = inCircle(ax: coords[2 * p0], ay: coords[2 * p0 + 1],
-                                   bx: coords[2 * pr], by: coords[2 * pr + 1],
-                                   cx: coords[2 * pl], cy: coords[2 * pl + 1],
-                                   px: coords[2 * p1], py: coords[2 * p1 + 1])
+            let illegal = inCircle(SIMD2<Double>(coords[2 * p0], coords[2 * p0 + 1]),
+                                   SIMD2<Double>(coords[2 * pr], coords[2 * pr + 1]),
+                                   SIMD2<Double>(coords[2 * pl], coords[2 * pl + 1]),
+                                   SIMD2<Double>(coords[2 * p1], coords[2 * p1 + 1]))
             
             if illegal {
                 triangles[a] = UInt32(p1)
@@ -406,78 +395,74 @@ class Delaunator {
         return t
     }
     
-    private func pseudoAngle(dx: Double, dy: Double) -> Double {
-        let p = dx / (abs(dx) + abs(dy))
-        return (dy > 0 ? 3 - p : 1 + p) / 4
+    @inline(__always)
+    private func pseudoAngle(d: SIMD2<Double>) -> Double {
+        let abs_d = abs(d)
+        let p = d.x / (abs_d.x + abs_d.y)
+        return (d.y > 0 ? 3 - p : 1 + p) / 4
     }
     
-    private func dist(ax: Double, ay: Double, bx: Double, by: Double) -> Double {
-        let dx = ax - bx
-        let dy = ay - by
-        return dx * dx + dy * dy
+    @inline(__always)
+    func squaredDistance(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double {
+        let diff = a - b
+        return dot(diff, diff)
     }
     
-    private func orient2d(ax: Double, ay: Double,
-                          bx: Double, by: Double,
-                          cx: Double, cy: Double) -> Double {
-        return (by - ay) * (cx - bx) - (bx - ax) * (cy - by)
+    @inline(__always)
+    private func orient2d(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>) -> Double {
+        let ab = b - a
+        let bc = c - b
+        return ab.y * bc.x - ab.x * bc.y
     }
     
-    private func inCircle(ax: Double, ay: Double,
-                          bx: Double, by: Double,
-                          cx: Double, cy: Double,
-                          px: Double, py: Double) -> Bool {
-        let dx = ax - px
-        let dy = ay - py
-        let ex = bx - px
-        let ey = by - py
-        let fx = cx - px
-        let fy = cy - py
+    @inline(__always)
+    private func inCircle(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>, _ p: SIMD2<Double>) -> Bool {
+        // Compute vectors from p to each point
+        let ap = a - p
+        let bp = b - p
+        let cp = c - p
         
-        let ap = dx * dx + dy * dy
-        let bp = ex * ex + ey * ey
-        let cp = fx * fx + fy * fy
+        // Compute squared distances
+        let ap_sq = dot(ap, ap)
+        let bp_sq = dot(bp, bp)
+        let cp_sq = dot(cp, cp)
         
-        return dx * (ey * cp - bp * fy) -
-        dy * (ex * cp - bp * fx) +
-        ap * (ex * fy - ey * fx) < 0
+        // Original determinant calculation which is numerically stable
+        return (ap.x * (bp.y * cp_sq - bp_sq * cp.y) -
+                ap.y * (bp.x * cp_sq - bp_sq * cp.x) +
+                ap_sq * (bp.x * cp.y - bp.y * cp.x)) < 0
     }
     
-    private func circumradius(ax: Double, ay: Double,
-                              bx: Double, by: Double,
-                              cx: Double, cy: Double) -> Double {
-        let dx = bx - ax
-        let dy = by - ay
-        let ex = cx - ax
-        let ey = cy - ay
+    @inline(__always)
+    private func circumradius(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>) -> Double {
+        let ab = b - a
+        let ac = c - a
         
-        let bl = dx * dx + dy * dy
-        let cl = ex * ex + ey * ey
-        let d = 0.5 / (dx * ey - dy * ex)
+        let bl = dot(ab, ab)
+        let cl = dot(ac, ac)
+        let d = 0.5 / (ab.x * ac.y - ab.y * ac.x)
         
-        let x = (ey * bl - dy * cl) * d
-        let y = (dx * cl - ex * bl) * d
+        let center = SIMD2<Double>(ac.y * bl - ab.y * cl,
+                                  ab.x * cl - ac.x * bl) * d
         
-        return x * x + y * y
+        return dot(center, center)
     }
     
-    private func circumcenter(ax: Double, ay: Double,
-                              bx: Double, by: Double,
-                              cx: Double, cy: Double) -> Point {
-        let dx = bx - ax
-        let dy = by - ay
-        let ex = cx - ax
-        let ey = cy - ay
+    @inline(__always)
+    private func circumcenter(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>) -> Point {
+        let ab = b - a
+        let ac = c - a
         
-        let bl = dx * dx + dy * dy
-        let cl = ex * ex + ey * ey
-        let d = 0.5 / (dx * ey - dy * ex)
+        let bl = dot(ab, ab)
+        let cl = dot(ac, ac)
+        let d = 0.5 / (ab.x * ac.y - ab.y * ac.x)
         
-        let coords = SIMD2<Double>(ax + (ey * bl - dy * cl) * d,
-                                   ay + (dx * cl - ex * bl) * d)
+        let coords = a + SIMD2<Double>(ac.y * bl - ab.y * cl,
+                                      ab.x * cl - ac.x * bl) * d
         
         return Point(coords)
     }
+    
     
     private func quicksort(ids: inout [UInt32], dists: [Double],
                            left: Int, right: Int) {
@@ -539,6 +524,7 @@ class Delaunator {
         }
     }
     
+    @inline(__always)
     private func swap(arr: inout [UInt32], i: Int, j: Int) {
         let tmp = arr[i]
         arr[i] = arr[j]
