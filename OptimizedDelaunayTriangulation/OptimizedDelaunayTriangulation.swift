@@ -13,24 +13,24 @@ struct Point {
 
 class Delaunator {
     private let EPSILON: Double = Darwin.pow(2.0, -52)
-    private var EDGE_STACK = [UInt32](repeating: 0, count: 512)
+    private var EDGE_STACK = [UInt](repeating: 0, count: 512)
     
     private var coords: [Double]
-    public private(set) var triangles: [UInt32]
-    public private(set) var halfedges: [Int32]
+    public private(set) var triangles: [UInt]
+    public private(set) var halfedges: [Int]
     private var trianglesLen: Int = 0
-    public private(set) var hull: [UInt32] = []
+    public private(set) var hull: [UInt] = []
     
     // Temporary arrays
     private var _hashSize: Int
-    private var _hullPrev: [UInt32]
-    private var _hullNext: [UInt32]
-    private var _hullTri: [UInt32]
-    private var _hullHash: [Int32]
-    private var _ids: [UInt32]
+    private var _hullPrev: [UInt]
+    private var _hullNext: [UInt]
+    private var _hullTri: [UInt]
+    private var _hullHash: [Int]
+    private var _ids: [UInt]
     private var _dists: [Double]
     private var _center = SIMD2<Double>(0, 0)
-    private var _hullStart: UInt32 = 0
+    private var _hullStart: UInt = 0
     
     static func from(points: [Point]) -> Delaunator {
         let n = points.count
@@ -49,15 +49,15 @@ class Delaunator {
         self.coords = coords
         
         let maxTriangles = max(2 * n - 5, 0)
-        self.triangles = [UInt32](repeating: 0, count: maxTriangles * 3)
-        self.halfedges = [Int32](repeating: 0, count: maxTriangles * 3)
+        self.triangles = [UInt](repeating: 0, count: maxTriangles * 3)
+        self.halfedges = [Int](repeating: 0, count: maxTriangles * 3)
         
         self._hashSize = Int(ceil(sqrt(Double(n))))
-        self._hullPrev = [UInt32](repeating: 0, count: n)
-        self._hullNext = [UInt32](repeating: 0, count: n)
-        self._hullTri = [UInt32](repeating: 0, count: n)
-        self._hullHash = [Int32](repeating: -1, count: self._hashSize)
-        self._ids = [UInt32](repeating: 0, count: n)
+        self._hullPrev = [UInt](repeating: 0, count: n)
+        self._hullNext = [UInt](repeating: 0, count: n)
+        self._hullTri = [UInt](repeating: 0, count: n)
+        self._hullHash = [Int](repeating: -1, count: self._hashSize)
+        self._ids = [UInt](repeating: 0, count: n)
         self._dists = [Double](repeating: 0, count: n)
         
         update()
@@ -78,7 +78,7 @@ class Delaunator {
             if y < minY { minY = y }
             if x > maxX { maxX = x }
             if y > maxY { maxY = y }
-            _ids[i] = UInt32(i)
+            _ids[i] = UInt(i)
         }
         
         let c = SIMD2<Double>((minX + maxX) / 2, (minY + maxY) / 2)
@@ -131,7 +131,7 @@ class Delaunator {
                 coords[2 * i] - coords[0] : coords[2 * i + 1] - coords[1]
             }
             quicksort(ids: &_ids, dists: _dists, left: 0, right: n - 1)
-            var hull = [UInt32](repeating: 0, count: n)
+            var hull = [UInt](repeating: 0, count: n)
             var j = 0
             var d0 = -Double.infinity
             
@@ -169,27 +169,27 @@ class Delaunator {
         
         quicksort(ids: &_ids, dists: _dists, left: 0, right: n - 1)
         
-        self._hullStart = UInt32(i0)
+        self._hullStart = UInt(i0)
         var hullSize = 3
         
-        _hullNext[i0] = UInt32(i1)
-        _hullPrev[i2] = UInt32(i1)
-        _hullNext[i1] = UInt32(i2)
-        _hullPrev[i0] = UInt32(i2)
-        _hullNext[i2] = UInt32(i0)
-        _hullPrev[i1] = UInt32(i0)
+        _hullNext[i0] = UInt(i1)
+        _hullPrev[i2] = UInt(i1)
+        _hullNext[i1] = UInt(i2)
+        _hullPrev[i0] = UInt(i2)
+        _hullNext[i2] = UInt(i0)
+        _hullPrev[i1] = UInt(i0)
         
         _hullTri[i0] = 0
         _hullTri[i1] = 1
         _hullTri[i2] = 2
         
-        _hullHash = [Int32](repeating: -1, count: _hashSize)
-        _hullHash[hashKey(i0p)] = Int32(i0)
-        _hullHash[hashKey(i1p)] = Int32(i1)
-        _hullHash[hashKey(i2p)] = Int32(i2)
+        _hullHash = [Int](repeating: -1, count: _hashSize)
+        _hullHash[hashKey(i0p)] = i0
+        _hullHash[hashKey(i1p)] = i1
+        _hullHash[hashKey(i2p)] = i2
         
         trianglesLen = 0
-        _ = addTriangle(i0: UInt32(i0), i1: UInt32(i1), i2: UInt32(i2),
+        _ = addTriangle(i0: UInt(i0), i1: UInt(i1), i2: UInt(i2),
                         a: -1, b: -1, c: -1)
         
         var xp: Double = 0
@@ -230,12 +230,12 @@ class Delaunator {
             
             if e == -1 { continue }
             
-            var t = addTriangle(i0: UInt32(e), i1: UInt32(i),
+            var t = addTriangle(i0: UInt(e), i1: UInt(i),
                                 i2: _hullNext[e],
                                 a: -1, b: -1, c: Int32(_hullTri[e]))
             
             _hullTri[i] = legalize(a: t + 2)
-            _hullTri[e] = UInt32(t)
+            _hullTri[e] = UInt(t)
             hullSize += 1
             
             var n = Int(_hullNext[e])
@@ -245,10 +245,10 @@ class Delaunator {
                             SIMD2<Double>(coords[2 * n], coords[2 * n + 1]),
                             SIMD2<Double>(coords[2 * q], coords[2 * q + 1])) >= 0 { break }
                 
-                t = addTriangle(i0: UInt32(n), i1: UInt32(i), i2: UInt32(q),
+                t = addTriangle(i0: UInt(n), i1: UInt(i), i2: UInt(q),
                                 a: Int32(_hullTri[i]), b: -1, c: Int32(_hullTri[n]))
                 _hullTri[i] = legalize(a: t + 2)
-                _hullNext[n] = UInt32(n)
+                _hullNext[n] = UInt(n)
                 hullSize -= 1
                 n = q
             }
@@ -260,30 +260,30 @@ class Delaunator {
                                 SIMD2<Double>(coords[2 * q], coords[2 * q + 1]),
                                 SIMD2<Double>(coords[2 * e], coords[2 * e + 1])) >= 0 { break }
                     
-                    t = addTriangle(i0: UInt32(q), i1: UInt32(i), i2: UInt32(e),
+                    t = addTriangle(i0: UInt(q), i1: UInt(i), i2: UInt(e),
                                     a: -1, b: Int32(_hullTri[e]), c: Int32(_hullTri[q]))
                     _ = legalize(a: t + 2)
-                    _hullTri[q] = UInt32(t)
-                    _hullNext[e] = UInt32(e)
+                    _hullTri[q] = UInt(t)
+                    _hullNext[e] = UInt(e)
                     hullSize -= 1
                     e = q
                 }
             }
             
-            _hullPrev[i] = UInt32(e)
-            _hullStart = UInt32(e)
-            _hullNext[e] = UInt32(i)
-            _hullPrev[n] = UInt32(i)
-            _hullNext[i] = UInt32(n)
+            _hullPrev[i] = UInt(e)
+            _hullStart = UInt(e)
+            _hullNext[e] = UInt(i)
+            _hullPrev[n] = UInt(i)
+            _hullNext[i] = UInt(n)
             
-            _hullHash[hashKey(p)] = Int32(i)
-            _hullHash[hashKey(SIMD2<Double>(coords[2 * e], coords[2 * e + 1]))] = Int32(e)
+            _hullHash[hashKey(p)] = i
+            _hullHash[hashKey(SIMD2<Double>(coords[2 * e], coords[2 * e + 1]))] = e
         }
         
         hull = Array(repeating: 0, count: hullSize)
         var e = Int(_hullStart)
         for i in 0..<hullSize {
-            hull[i] = UInt32(e)
+            hull[i] = UInt(e)
             e = Int(_hullNext[e])
         }
         
@@ -302,7 +302,7 @@ class Delaunator {
         return Int(floor(Double(angle) * Double(_hashSize))) % _hashSize
     }
     
-    private func legalize(a: Int) -> UInt32 {
+    private func legalize(a: Int) -> UInt {
         var i: Int = 0
         var ar: Int = 0
         var a = a
@@ -335,8 +335,8 @@ class Delaunator {
                                    SIMD2<Double>(coords[2 * p1], coords[2 * p1 + 1]))
             
             if illegal {
-                triangles[a] = UInt32(p1)
-                triangles[b] = UInt32(p0)
+                triangles[a] = UInt(p1)
+                triangles[b] = UInt(p0)
                 
                 let hbl = halfedges[bl]
                 
@@ -344,8 +344,8 @@ class Delaunator {
                 if hbl == -1 {
                     var e = Int(_hullStart)
                     repeat {
-                        if _hullTri[e] == UInt32(bl) {
-                            _hullTri[e] = UInt32(a)
+                        if _hullTri[e] == UInt(bl) {
+                            _hullTri[e] = UInt(a)
                             break
                         }
                         e = Int(_hullPrev[e])
@@ -359,7 +359,7 @@ class Delaunator {
                 let br = b0 + (b + 1) % 3
                 
                 if i < EDGE_STACK.count {
-                    EDGE_STACK[i] = UInt32(br)
+                    EDGE_STACK[i] = UInt(br)
                     i += 1
                 }
             } else {
@@ -369,17 +369,17 @@ class Delaunator {
             }
         }
         
-        return UInt32(ar)
+        return UInt(ar)
     }
     
     private func link(a: Int, b: Int) {
-        halfedges[a] = Int32(b)
+        halfedges[a] = b
         if b != -1 {
-            halfedges[b] = Int32(a)
+            halfedges[b] = a
         }
     }
     
-    private func addTriangle(i0: UInt32, i1: UInt32, i2: UInt32,
+    private func addTriangle(i0: UInt, i1: UInt, i2: UInt,
                              a: Int32, b: Int32, c: Int32) -> Int {
         let t = trianglesLen
         
@@ -464,7 +464,7 @@ class Delaunator {
     }
     
     
-    private func quicksort(ids: inout [UInt32], dists: [Double],
+    private func quicksort(ids: inout [UInt], dists: [Double],
                            left: Int, right: Int) {
         if right <= left {
             return
@@ -525,7 +525,7 @@ class Delaunator {
     }
     
     @inline(__always)
-    private func swap(arr: inout [UInt32], i: Int, j: Int) {
+    private func swap(arr: inout [UInt], i: Int, j: Int) {
         let tmp = arr[i]
         arr[i] = arr[j]
         arr[j] = tmp

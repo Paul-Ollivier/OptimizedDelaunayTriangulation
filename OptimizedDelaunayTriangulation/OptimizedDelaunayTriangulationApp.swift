@@ -13,7 +13,7 @@ struct DelaunatorApp: App {
 
 struct DelaunatorView: View {
     @State private var points: [Point] = []
-    @State private var triangles: [UInt32] = []
+    @State private var triangles: [UInt] = []
     @State private var lastExecutionTime: Double = 0
     private let size: CGFloat = 600
     private let pointCount = 10000
