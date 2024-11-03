@@ -3,12 +3,20 @@ import Darwin
 import simd
 import Dispatch
 
+// Point type alias for clarity
+typealias DPoint = SIMD2<Double>
+
 struct Point {
-    let coords: SIMD2<Double>
+    let coords: DPoint
     
-    init(_ coords: SIMD2<Double>) {
+    init(_ coords: DPoint) {
         self.coords = coords
     }
+}
+
+private struct DTriangle {
+    var i0, i1, i2: Int
+    var p0, p1, p2: DPoint
 }
 
 class Delaunator {
@@ -29,7 +37,7 @@ class Delaunator {
     private var _hullHash: [Int]
     private var _ids: [UInt]
     private var _dists: [Double]
-    private var _center = SIMD2<Double>(0, 0)
+    private var _center: DPoint = DPoint(0, 0)
     private var _hullStart: UInt = 0
     
     // Concurrent queue for parallel processing
@@ -169,7 +177,7 @@ class Delaunator {
         }
         boundsGroup.wait()
         
-        let c = SIMD2<Double>((minX + maxX) / 2, (minY + maxY) / 2)
+        let c = DPoint((minX + maxX) / 2, (minY + maxY) / 2)
         
         // 2. Find initial point - parallel
         let distanceGroup = DispatchGroup()
@@ -184,7 +192,7 @@ class Delaunator {
                 var localI0 = 0
                 
                 for i in start..<end {
-                    let d = self.squaredDistance(c, SIMD2<Double>(self.coords[2 * i], self.coords[2 * i + 1]))
+                    let d = self.squaredDistance(c, DPoint(self.coords[2 * i], self.coords[2 * i + 1]))
                     if d < localMinDist {
                         localI0 = i
                         localMinDist = d
@@ -201,7 +209,7 @@ class Delaunator {
         }
         distanceGroup.wait()
         
-        let i0p = SIMD2<Double>(coords[2 * i0], coords[2 * i0 + 1])
+        let i0p = DPoint(coords[2 * i0], coords[2 * i0 + 1])
         
         // Initialize ids array
         DispatchQueue.concurrentPerform(iterations: n) { i in
@@ -221,7 +229,7 @@ class Delaunator {
                 
                 for i in start..<end {
                     if i == i0 { continue }
-                    let d = self.squaredDistance(i0p, SIMD2<Double>(self.coords[2 * i], self.coords[2 * i + 1]))
+                    let d = self.squaredDistance(i0p, DPoint(self.coords[2 * i], self.coords[2 * i + 1]))
                     if d < localMinDist && d > 0 {
                         localI1 = i
                         localMinDist = d
@@ -238,7 +246,15 @@ class Delaunator {
         }
         secondPointGroup.wait()
         
-        var i1p = SIMD2<Double>(coords[2 * i1], coords[2 * i1 + 1])
+        // Create initial triangle points
+        var triangle = DTriangle(
+            i0: i0,
+            i1: i1,
+            i2: 0,  // Will be set after finding third point
+            p0: i0p,
+            p1: DPoint(coords[2 * i1], coords[2 * i1 + 1]),
+            p2: DPoint(0, 0)  // Will be set after finding third point
+        )
         
         // 4. Find third point - parallel
         var minRadius = Double.infinity
@@ -253,8 +269,9 @@ class Delaunator {
                 var localI2 = 0
                 
                 for i in start..<end {
-                    if i == i0 || i == i1 { continue }
-                    let r = self.circumradius(i0p, i1p, SIMD2<Double>(self.coords[2 * i], self.coords[2 * i + 1]))
+                    if i == triangle.i0 || i == triangle.i1 { continue }
+                    let p = DPoint(self.coords[2 * i], self.coords[2 * i + 1])
+                    let r = self.circumradius(triangle.p0, triangle.p1, p)
                     if r < localMinRadius {
                         localI2 = i
                         localMinRadius = r
@@ -299,63 +316,66 @@ class Delaunator {
             return
         }
         
-        var i2p = SIMD2<Double>(coords[2 * i2], coords[2 * i2 + 1])
+        // Update triangle with third point
+        triangle.i2 = i2
+        triangle.p2 = DPoint(coords[2 * i2], coords[2 * i2 + 1])
         
-        if orient2d(i0p, i1p, i2p) < 0 {
-            let i = i1
-            let p = i1p
-            i1 = i2
-            i1p = i2p
-            i2 = i
-            i2p = p
+        if orient2d(triangle.p0, triangle.p1, triangle.p2) < 0 {
+            // Swap points 1 and 2
+            let tempI = triangle.i1
+            let tempP = triangle.p1
+            triangle.i1 = triangle.i2
+            triangle.p1 = triangle.p2
+            triangle.i2 = tempI
+            triangle.p2 = tempP
         }
         
-        let center = circumcenter(i0p, i1p, i2p)
+        let center = circumcenter(triangle.p0, triangle.p1, triangle.p2)
         self._center = center.coords
         
         // Parallel distance computation
         DispatchQueue.concurrentPerform(iterations: n) { i in
-            _dists[i] = squaredDistance(SIMD2<Double>(coords[2 * i], coords[2 * i + 1]), center.coords)
+            _dists[i] = squaredDistance(DPoint(coords[2 * i], coords[2 * i + 1]), center.coords)
         }
         
         // Sequential sorting
         quicksort(ids: &_ids, dists: _dists, left: 0, right: n - 1)
         
         // Initialize hull
-        self._hullStart = UInt(i0)
+        self._hullStart = UInt(triangle.i0)
         var hullSize = 3
         
-        _hullNext[i0] = UInt(i1)
-        _hullPrev[i2] = UInt(i1)
-        _hullNext[i1] = UInt(i2)
-        _hullPrev[i0] = UInt(i2)
-        _hullNext[i2] = UInt(i0)
-        _hullPrev[i1] = UInt(i0)
+        _hullNext[triangle.i0] = UInt(triangle.i1)
+        _hullPrev[triangle.i2] = UInt(triangle.i1)
+        _hullNext[triangle.i1] = UInt(triangle.i2)
+        _hullPrev[triangle.i0] = UInt(triangle.i2)
+        _hullNext[triangle.i2] = UInt(triangle.i0)
+        _hullPrev[triangle.i1] = UInt(triangle.i0)
         
-        _hullTri[i0] = 0
-        _hullTri[i1] = 1
-        _hullTri[i2] = 2
+        _hullTri[triangle.i0] = 0
+        _hullTri[triangle.i1] = 1
+        _hullTri[triangle.i2] = 2
         
         _hullHash = [Int](repeating: -1, count: _hashSize)
-        _hullHash[hashKey(i0p)] = i0
-        _hullHash[hashKey(i1p)] = i1
-        _hullHash[hashKey(i2p)] = i2
+        _hullHash[hashKey(triangle.p0)] = triangle.i0
+        _hullHash[hashKey(triangle.p1)] = triangle.i1
+        _hullHash[hashKey(triangle.p2)] = triangle.i2
         
         trianglesLen = 0
-        _ = addTriangle(i0: UInt(i0), i1: UInt(i1), i2: UInt(i2), a: -1, b: -1, c: -1)
+        _ = addTriangle(i0: UInt(triangle.i0), i1: UInt(triangle.i1), i2: UInt(triangle.i2), a: -1, b: -1, c: -1)
         
         var xp: Double = 0
         var yp: Double = 0
         
         for k in 0..<_ids.count {
             let i = Int(_ids[k])
-            let p = SIMD2<Double>(coords[2 * i], coords[2 * i + 1])
+            let p = DPoint(coords[2 * i], coords[2 * i + 1])
             
             if k > 0 && abs(p.x - xp) <= EPSILON && abs(p.y - yp) <= EPSILON { continue }
             xp = p.x
             yp = p.y
             
-            if i == i0 || i == i1 || i == i2 { continue }
+            if i == triangle.i0 || i == triangle.i1 || i == triangle.i2 { continue }
             
             var start: Int = 0
             let key = hashKey(p)
@@ -371,8 +391,8 @@ class Delaunator {
             while true {
                 let q = Int(_hullNext[e])
                 if orient2d(p,
-                            SIMD2<Double>(coords[2 * e], coords[2 * e + 1]),
-                            SIMD2<Double>(coords[2 * q], coords[2 * q + 1])) < 0 { break }
+                            DPoint(coords[2 * e], coords[2 * e + 1]),
+                            DPoint(coords[2 * q], coords[2 * q + 1])) < 0 { break }
                 e = q
                 if e == start {
                     e = -1
@@ -393,8 +413,8 @@ class Delaunator {
             while true {
                 let q = Int(_hullNext[n])
                 if orient2d(p,
-                            SIMD2<Double>(coords[2 * n], coords[2 * n + 1]),
-                            SIMD2<Double>(coords[2 * q], coords[2 * q + 1])) >= 0 { break }
+                            DPoint(coords[2 * n], coords[2 * n + 1]),
+                            DPoint(coords[2 * q], coords[2 * q + 1])) >= 0 { break }
                 
                 t = addTriangle(i0: UInt(n), i1: UInt(i), i2: UInt(q),
                                 a: Int32(_hullTri[i]), b: -1, c: Int32(_hullTri[n]))
@@ -409,8 +429,8 @@ class Delaunator {
                 while true {
                     let q = Int(_hullPrev[e])
                     if orient2d(p,
-                                SIMD2<Double>(coords[2 * q], coords[2 * q + 1]),
-                                SIMD2<Double>(coords[2 * e], coords[2 * e + 1])) >= 0 { break }
+                                DPoint(coords[2 * q], coords[2 * q + 1]),
+                                DPoint(coords[2 * e], coords[2 * e + 1])) >= 0 { break }
                     
                     t = addTriangle(i0: UInt(q), i1: UInt(i), i2: UInt(e),
                                     a: -1, b: Int32(_hullTri[e]), c: Int32(_hullTri[q]))
@@ -430,7 +450,7 @@ class Delaunator {
             _hullNext[i] = UInt(n)
             
             _hullHash[hashKey(p)] = i
-            _hullHash[hashKey(SIMD2<Double>(coords[2 * e], coords[2 * e + 1]))] = e
+            _hullHash[hashKey(DPoint(coords[2 * e], coords[2 * e + 1]))] = e
         }
         
         hull = Array(repeating: 0, count: hullSize)
@@ -477,10 +497,10 @@ class Delaunator {
             let p1 = Int(triangles[bl])
             
             let illegal = inCircle(
-                SIMD2<Double>(coords[2 * p0], coords[2 * p0 + 1]),
-                SIMD2<Double>(coords[2 * pr], coords[2 * pr + 1]),
-                SIMD2<Double>(coords[2 * pl], coords[2 * pl + 1]),
-                SIMD2<Double>(coords[2 * p1], coords[2 * p1 + 1])
+                DPoint(coords[2 * p0], coords[2 * p0 + 1]),
+                DPoint(coords[2 * pr], coords[2 * pr + 1]),
+                DPoint(coords[2 * pl], coords[2 * pl + 1]),
+                DPoint(coords[2 * p1], coords[2 * p1 + 1])
             )
             
             if illegal {
@@ -543,13 +563,13 @@ class Delaunator {
     }
     
     @inline(__always)
-    private func hashKey(_ coords: SIMD2<Double>) -> Int {
+    private func hashKey(_ coords: DPoint) -> Int {
         let angle = pseudoAngle(d: coords - _center)
         return Int(floor(Double(angle) * Double(_hashSize))) % _hashSize
     }
     
     @inline(__always)
-    private func pseudoAngle(d: SIMD2<Double>) -> Double {
+    private func pseudoAngle(d: DPoint) -> Double {
         let abs_d = abs(d)
         let sum = abs_d.x + abs_d.y
         guard sum != 0 else { return 0 }
@@ -558,19 +578,19 @@ class Delaunator {
     }
     
     @inline(__always)
-    private func squaredDistance(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double {
+    private func squaredDistance(_ a: DPoint, _ b: DPoint) -> Double {
         return simd_distance_squared(a, b)
     }
     
     @inline(__always)
-    private func orient2d(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>) -> Double {
+    private func orient2d(_ a: DPoint, _ b: DPoint, _ c: DPoint) -> Double {
         let ab = b - a
         let bc = c - b
         return ab.y * bc.x - ab.x * bc.y
     }
     
     @inline(__always)
-    private func inCircle(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>, _ p: SIMD2<Double>) -> Bool {
+    private func inCircle(_ a: DPoint, _ b: DPoint, _ c: DPoint, _ p: DPoint) -> Bool {
         let ap = a - p
         let bp = b - p
         let cp = c - p
@@ -588,7 +608,7 @@ class Delaunator {
     }
     
     @inline(__always)
-    private func circumradius(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>) -> Double {
+    private func circumradius(_ a: DPoint, _ b: DPoint, _ c: DPoint) -> Double {
         let ab = b - a
         let ac = c - a
         
@@ -597,7 +617,7 @@ class Delaunator {
         
         let d = 0.5 / simd_cross(ab, ac).z
         
-        let center = SIMD2<Double>(
+        let center = DPoint(
             ac.y * bl - ab.y * cl,
             ab.x * cl - ac.x * bl
         ) * d
@@ -606,7 +626,7 @@ class Delaunator {
     }
     
     @inline(__always)
-    private func circumcenter(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>) -> Point {
+    private func circumcenter(_ a: DPoint, _ b: DPoint, _ c: DPoint) -> Point {
         let ab = b - a
         let ac = c - a
         
@@ -615,7 +635,7 @@ class Delaunator {
         
         let d = 0.5 / simd_cross(ab, ac).z
         
-        let coords = a + SIMD2<Double>(
+        let coords = a + DPoint(
             ac.y * bl - ab.y * cl,
             ab.x * cl - ac.x * bl
         ) * d
