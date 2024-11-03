@@ -1,9 +1,14 @@
 import Foundation
 import Darwin
+import simd
 
 struct Point {
-    let x: Double
-    let y: Double
+    let coords: SIMD2<Double>
+    
+    init(_ coords: SIMD2<Double>)
+    {
+        self.coords = coords
+    }
 }
 
 class Delaunator {
@@ -33,8 +38,8 @@ class Delaunator {
         var coords = [Double](repeating: 0, count: n * 2)
         
         for i in 0..<n {
-            coords[2 * i] = points[i].x
-            coords[2 * i + 1] = points[i].y
+            coords[2 * i] = points[i].coords.x
+            coords[2 * i + 1] = points[i].coords.y
         }
         
         return Delaunator(coords: coords)
@@ -165,12 +170,11 @@ class Delaunator {
         }
         
         let center = circumcenter(ax: i0x, ay: i0y, bx: i1x, by: i1y, cx: i2x, cy: i2y)
-        self._cx = center.x
-        self._cy = center.y
+        self._cx = center.coords.x
+        self._cy = center.coords.y
         
         for i in 0..<n {
-            _dists[i] = dist(ax: coords[2 * i], ay: coords[2 * i + 1],
-                             bx: center.x, by: center.y)
+            _dists[i] = dist(ax: coords[2 * i], ay: coords[2 * i + 1], bx: center.coords.x, by: center.coords.y)
         }
         
         quicksort(ids: &_ids, dists: _dists, left: 0, right: n - 1)
@@ -469,10 +473,10 @@ class Delaunator {
         let cl = ex * ex + ey * ey
         let d = 0.5 / (dx * ey - dy * ex)
         
-        let x = ax + (ey * bl - dy * cl) * d
-        let y = ay + (dx * cl - ex * bl) * d
+        let coords = SIMD2<Double>(ax + (ey * bl - dy * cl) * d,
+                                   ay + (dx * cl - ex * bl) * d)
         
-        return Point(x: x, y: y)
+        return Point(coords)
     }
     
     private func quicksort(ids: inout [UInt32], dists: [Double],

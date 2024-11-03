@@ -29,9 +29,9 @@ struct DelaunatorView: View {
                         let p3 = points[Int(triangles[i + 2])]
                         
                         let path = Path { path in
-                            path.move(to: CGPoint(x: p1.x, y: p1.y))
-                            path.addLine(to: CGPoint(x: p2.x, y: p2.y))
-                            path.addLine(to: CGPoint(x: p3.x, y: p3.y))
+                            path.move(to: CGPoint(x: p1.coords.x, y: p1.coords.y))
+                            path.addLine(to: CGPoint(x: p2.coords.x, y: p2.coords.y))
+                            path.addLine(to: CGPoint(x: p3.coords.x, y: p3.coords.y))
                             path.closeSubpath()
                         }
                         
@@ -41,7 +41,7 @@ struct DelaunatorView: View {
                 
                 // Draw points
                 for point in points {
-                    let rect = CGRect(x: point.x - 1, y: point.y - 1, width: 2, height: 2)
+                    let rect = CGRect(x: point.coords.x - 1, y: point.coords.y - 1, width: 2, height: 2)
                     context.fill(Path(ellipseIn: rect), with: .color(.red.opacity(0.5)))
                 }
             }
@@ -72,9 +72,8 @@ struct DelaunatorView: View {
         // Generate random points
         var newPoints: [Point] = []
         for _ in 0..<pointCount {
-            let x = Double.random(in: 50..<(size-50))
-            let y = Double.random(in: 50..<(size-50))
-            newPoints.append(Point(x: x, y: y))
+            let coords = SIMD2<Double>(Double.random(in: 50..<(size-50)), Double.random(in: 50..<(size-50)))
+            newPoints.append(Point(coords))
         }
         
         // Measure triangulation time
