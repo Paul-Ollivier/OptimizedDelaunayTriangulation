@@ -1,12 +1,12 @@
 import Foundation
 import Darwin
 import simd
+import Dispatch
 
 struct Point {
     let coords: SIMD2<Double>
     
-    init(_ coords: SIMD2<Double>)
-    {
+    init(_ coords: SIMD2<Double>) {
         self.coords = coords
     }
 }
@@ -31,6 +31,11 @@ class Delaunator {
     private var _dists: [Double]
     private var _center = SIMD2<Double>(0, 0)
     private var _hullStart: UInt = 0
+    
+    // Concurrent queue for parallel processing
+    private let processingQueue = DispatchQueue(label: "com.delaunator.processing",
+                                                qos: .userInitiated,
+                                                attributes: .concurrent)
     
     static func from(points: [Point]) -> Delaunator {
         let n = points.count
@@ -63,74 +68,218 @@ class Delaunator {
         update()
     }
     
+    private func quicksort(ids: inout [UInt], dists: [Double], left: Int, right: Int) {
+        if right <= left { return }
+        
+        if right - left <= 20 {
+            // Insertion sort for small subarrays
+            for i in (left + 1)...right {
+                let temp = ids[i]
+                let tempDist = dists[Int(temp)]
+                var j = i - 1
+                while j >= left && dists[Int(ids[j])] > tempDist {
+                    ids[j + 1] = ids[j]
+                    j -= 1
+                }
+                ids[j + 1] = temp
+            }
+            return
+        }
+        
+        let median = (left + right) >> 1
+        var i = left + 1
+        var j = right
+        
+        swap(arr: &ids, i: median, j: i)
+        
+        if dists[Int(ids[left])] > dists[Int(ids[right])] {
+            swap(arr: &ids, i: left, j: right)
+        }
+        if dists[Int(ids[i])] > dists[Int(ids[right])] {
+            swap(arr: &ids, i: i, j: right)
+        }
+        if dists[Int(ids[left])] > dists[Int(ids[i])] {
+            swap(arr: &ids, i: left, j: i)
+        }
+        
+        let temp = ids[i]
+        let tempDist = dists[Int(temp)]
+        
+        while true {
+            repeat { i += 1 } while i <= right && dists[Int(ids[i])] < tempDist
+            repeat { j -= 1 } while j >= left && dists[Int(ids[j])] > tempDist
+            if j < i { break }
+            swap(arr: &ids, i: i, j: j)
+        }
+        
+        ids[left + 1] = ids[j]
+        ids[j] = temp
+        
+        if j > left {
+            quicksort(ids: &ids, dists: dists, left: left, right: j - 1)
+        }
+        if j + 1 < right {
+            quicksort(ids: &ids, dists: dists, left: j + 1, right: right)
+        }
+    }
+    
+    @inline(__always)
+    private func swap(arr: inout [UInt], i: Int, j: Int) {
+        let tmp = arr[i]
+        arr[i] = arr[j]
+        arr[j] = tmp
+    }
+    
     private func update() {
         let n = coords.count >> 1
         
+        // 1. Parallel computation of bounds
+        let chunkSize = max(1, n / ProcessInfo.processInfo.activeProcessorCount)
+        let boundsGroup = DispatchGroup()
         var minX = Double.infinity
         var minY = Double.infinity
         var maxX = -Double.infinity
         var maxY = -Double.infinity
+        let boundsLock = NSLock()
         
-        for i in 0..<n {
-            let x = coords[2 * i]
-            let y = coords[2 * i + 1]
-            if x < minX { minX = x }
-            if y < minY { minY = y }
-            if x > maxX { maxX = x }
-            if y > maxY { maxY = y }
-            _ids[i] = UInt(i)
+        for start in stride(from: 0, to: n, by: chunkSize) {
+            let end = min(start + chunkSize, n)
+            processingQueue.async(group: boundsGroup) {
+                var localMinX = Double.infinity
+                var localMinY = Double.infinity
+                var localMaxX = -Double.infinity
+                var localMaxY = -Double.infinity
+                
+                for i in start..<end {
+                    let x = self.coords[2 * i]
+                    let y = self.coords[2 * i + 1]
+                    localMinX = min(localMinX, x)
+                    localMinY = min(localMinY, y)
+                    localMaxX = max(localMaxX, x)
+                    localMaxY = max(localMaxY, y)
+                }
+                
+                boundsLock.lock()
+                minX = min(minX, localMinX)
+                minY = min(minY, localMinY)
+                maxX = max(maxX, localMaxX)
+                maxY = max(maxY, localMaxY)
+                boundsLock.unlock()
+            }
         }
+        boundsGroup.wait()
         
         let c = SIMD2<Double>((minX + maxX) / 2, (minY + maxY) / 2)
         
-        var i0: Int = 0
+        // 2. Find initial point - parallel
+        let distanceGroup = DispatchGroup()
         var minDist = Double.infinity
+        var i0: Int = 0
+        let distanceLock = NSLock()
         
-        for i in 0..<n {
-            let d = squaredDistance(c, SIMD2<Double>(coords[2 * i], coords[2 * i + 1]))
-            if d < minDist {
-                i0 = i
-                minDist = d
+        for start in stride(from: 0, to: n, by: chunkSize) {
+            let end = min(start + chunkSize, n)
+            processingQueue.async(group: distanceGroup) {
+                var localMinDist = Double.infinity
+                var localI0 = 0
+                
+                for i in start..<end {
+                    let d = self.squaredDistance(c, SIMD2<Double>(self.coords[2 * i], self.coords[2 * i + 1]))
+                    if d < localMinDist {
+                        localI0 = i
+                        localMinDist = d
+                    }
+                }
+                
+                distanceLock.lock()
+                if localMinDist < minDist {
+                    minDist = localMinDist
+                    i0 = localI0
+                }
+                distanceLock.unlock()
             }
         }
+        distanceGroup.wait()
         
         let i0p = SIMD2<Double>(coords[2 * i0], coords[2 * i0 + 1])
         
+        // Initialize ids array
+        DispatchQueue.concurrentPerform(iterations: n) { i in
+            _ids[i] = UInt(i)
+        }
+        
+        // 3. Find second point - parallel
         var i1: Int = 0
         minDist = Double.infinity
+        let secondPointGroup = DispatchGroup()
         
-        for i in 0..<n {
-            if i == i0 { continue }
-            let d = squaredDistance(i0p, SIMD2<Double>(coords[2 * i], coords[2 * i + 1]))
-            if d < minDist && d > 0 {
-                i1 = i
-                minDist = d
+        for start in stride(from: 0, to: n, by: chunkSize) {
+            let end = min(start + chunkSize, n)
+            processingQueue.async(group: secondPointGroup) {
+                var localMinDist = Double.infinity
+                var localI1 = 0
+                
+                for i in start..<end {
+                    if i == i0 { continue }
+                    let d = self.squaredDistance(i0p, SIMD2<Double>(self.coords[2 * i], self.coords[2 * i + 1]))
+                    if d < localMinDist && d > 0 {
+                        localI1 = i
+                        localMinDist = d
+                    }
+                }
+                
+                distanceLock.lock()
+                if localMinDist < minDist {
+                    minDist = localMinDist
+                    i1 = localI1
+                }
+                distanceLock.unlock()
             }
         }
+        secondPointGroup.wait()
         
         var i1p = SIMD2<Double>(coords[2 * i1], coords[2 * i1 + 1])
         
+        // 4. Find third point - parallel
         var minRadius = Double.infinity
         var i2: Int = 0
+        let thirdPointGroup = DispatchGroup()
+        let radiusLock = NSLock()
         
-        for i in 0..<n {
-            if i == i0 || i == i1 { continue }
-            let r = circumradius(i0p, i1p, SIMD2<Double>(coords[2 * i], coords[2 * i + 1]))
-            if r < minRadius {
-                i2 = i
-                minRadius = r
+        for start in stride(from: 0, to: n, by: chunkSize) {
+            let end = min(start + chunkSize, n)
+            processingQueue.async(group: thirdPointGroup) {
+                var localMinRadius = Double.infinity
+                var localI2 = 0
+                
+                for i in start..<end {
+                    if i == i0 || i == i1 { continue }
+                    let r = self.circumradius(i0p, i1p, SIMD2<Double>(self.coords[2 * i], self.coords[2 * i + 1]))
+                    if r < localMinRadius {
+                        localI2 = i
+                        localMinRadius = r
+                    }
+                }
+                
+                radiusLock.lock()
+                if localMinRadius < minRadius {
+                    minRadius = localMinRadius
+                    i2 = localI2
+                }
+                radiusLock.unlock()
             }
         }
-        
-        var i2p = SIMD2<Double>(coords[2 * i2], coords[2 * i2 + 1])
+        thirdPointGroup.wait()
         
         if minRadius == Double.infinity {
             // Handle collinear points
-            for i in 0..<n {
+            DispatchQueue.concurrentPerform(iterations: n) { i in
                 _dists[i] = coords[2 * i] - coords[0] != 0 ?
                 coords[2 * i] - coords[0] : coords[2 * i + 1] - coords[1]
             }
+            
             quicksort(ids: &_ids, dists: _dists, left: 0, right: n - 1)
+            
             var hull = [UInt](repeating: 0, count: n)
             var j = 0
             var d0 = -Double.infinity
@@ -147,9 +296,10 @@ class Delaunator {
             self.hull = Array(hull[0..<j])
             self.triangles = []
             self.halfedges = []
-            trianglesLen = 0
             return
         }
+        
+        var i2p = SIMD2<Double>(coords[2 * i2], coords[2 * i2 + 1])
         
         if orient2d(i0p, i1p, i2p) < 0 {
             let i = i1
@@ -163,12 +313,15 @@ class Delaunator {
         let center = circumcenter(i0p, i1p, i2p)
         self._center = center.coords
         
-        for i in 0..<n {
+        // Parallel distance computation
+        DispatchQueue.concurrentPerform(iterations: n) { i in
             _dists[i] = squaredDistance(SIMD2<Double>(coords[2 * i], coords[2 * i + 1]), center.coords)
         }
         
+        // Sequential sorting
         quicksort(ids: &_ids, dists: _dists, left: 0, right: n - 1)
         
+        // Initialize hull
         self._hullStart = UInt(i0)
         var hullSize = 3
         
@@ -189,8 +342,7 @@ class Delaunator {
         _hullHash[hashKey(i2p)] = i2
         
         trianglesLen = 0
-        _ = addTriangle(i0: UInt(i0), i1: UInt(i1), i2: UInt(i2),
-                        a: -1, b: -1, c: -1)
+        _ = addTriangle(i0: UInt(i0), i1: UInt(i1), i2: UInt(i2), a: -1, b: -1, c: -1)
         
         var xp: Double = 0
         var yp: Double = 0
@@ -230,8 +382,7 @@ class Delaunator {
             
             if e == -1 { continue }
             
-            var t = addTriangle(i0: UInt(e), i1: UInt(i),
-                                i2: _hullNext[e],
+            var t = addTriangle(i0: UInt(e), i1: UInt(i), i2: _hullNext[e],
                                 a: -1, b: -1, c: Int32(_hullTri[e]))
             
             _hullTri[i] = legalize(a: t + 2)
@@ -247,6 +398,7 @@ class Delaunator {
                 
                 t = addTriangle(i0: UInt(n), i1: UInt(i), i2: UInt(q),
                                 a: Int32(_hullTri[i]), b: -1, c: Int32(_hullTri[n]))
+                
                 _hullTri[i] = legalize(a: t + 2)
                 _hullNext[n] = UInt(n)
                 hullSize -= 1
@@ -262,6 +414,7 @@ class Delaunator {
                     
                     t = addTriangle(i0: UInt(q), i1: UInt(i), i2: UInt(e),
                                     a: -1, b: Int32(_hullTri[e]), c: Int32(_hullTri[q]))
+                    
                     _ = legalize(a: t + 2)
                     _hullTri[q] = UInt(t)
                     _hullNext[e] = UInt(e)
@@ -296,12 +449,6 @@ class Delaunator {
         }
     }
     
-    @inline(__always)
-    private func hashKey(_ coords: SIMD2<Double>) -> Int {
-        let angle = pseudoAngle(d: coords - _center)
-        return Int(floor(Double(angle) * Double(_hashSize))) % _hashSize
-    }
-    
     private func legalize(a: Int) -> UInt {
         var i: Int = 0
         var ar: Int = 0
@@ -329,10 +476,12 @@ class Delaunator {
             let pl = Int(triangles[al])
             let p1 = Int(triangles[bl])
             
-            let illegal = inCircle(SIMD2<Double>(coords[2 * p0], coords[2 * p0 + 1]),
-                                   SIMD2<Double>(coords[2 * pr], coords[2 * pr + 1]),
-                                   SIMD2<Double>(coords[2 * pl], coords[2 * pl + 1]),
-                                   SIMD2<Double>(coords[2 * p1], coords[2 * p1 + 1]))
+            let illegal = inCircle(
+                SIMD2<Double>(coords[2 * p0], coords[2 * p0 + 1]),
+                SIMD2<Double>(coords[2 * pr], coords[2 * pr + 1]),
+                SIMD2<Double>(coords[2 * pl], coords[2 * pl + 1]),
+                SIMD2<Double>(coords[2 * p1], coords[2 * p1 + 1])
+            )
             
             if illegal {
                 triangles[a] = UInt(p1)
@@ -340,7 +489,6 @@ class Delaunator {
                 
                 let hbl = halfedges[bl]
                 
-                // Continuing legalize function...
                 if hbl == -1 {
                     var e = Int(_hullStart)
                     repeat {
@@ -379,8 +527,7 @@ class Delaunator {
         }
     }
     
-    private func addTriangle(i0: UInt, i1: UInt, i2: UInt,
-                             a: Int32, b: Int32, c: Int32) -> Int {
+    private func addTriangle(i0: UInt, i1: UInt, i2: UInt, a: Int32, b: Int32, c: Int32) -> Int {
         let t = trianglesLen
         
         triangles[t] = i0
@@ -396,16 +543,23 @@ class Delaunator {
     }
     
     @inline(__always)
+    private func hashKey(_ coords: SIMD2<Double>) -> Int {
+        let angle = pseudoAngle(d: coords - _center)
+        return Int(floor(Double(angle) * Double(_hashSize))) % _hashSize
+    }
+    
+    @inline(__always)
     private func pseudoAngle(d: SIMD2<Double>) -> Double {
         let abs_d = abs(d)
-        let p = d.x / (abs_d.x + abs_d.y)
+        let sum = abs_d.x + abs_d.y
+        guard sum != 0 else { return 0 }
+        let p = d.x / sum
         return (d.y > 0 ? 3 - p : 1 + p) / 4
     }
     
     @inline(__always)
-    func squaredDistance(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double {
-        let diff = a - b
-        return dot(diff, diff)
+    private func squaredDistance(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double {
+        return simd_distance_squared(a, b)
     }
     
     @inline(__always)
@@ -417,20 +571,20 @@ class Delaunator {
     
     @inline(__always)
     private func inCircle(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>, _ p: SIMD2<Double>) -> Bool {
-        // Compute vectors from p to each point
         let ap = a - p
         let bp = b - p
         let cp = c - p
         
-        // Compute squared distances
-        let ap_sq = dot(ap, ap)
-        let bp_sq = dot(bp, bp)
-        let cp_sq = dot(cp, cp)
+        let ap_sq = simd_dot(ap, ap)
+        let bp_sq = simd_dot(bp, bp)
+        let cp_sq = simd_dot(cp, cp)
         
-        // Original determinant calculation which is numerically stable
-        return (ap.x * (bp.y * cp_sq - bp_sq * cp.y) -
-                ap.y * (bp.x * cp_sq - bp_sq * cp.x) +
-                ap_sq * (bp.x * cp.y - bp.y * cp.x)) < 0
+        let m = SIMD3<Double>(
+            ap_sq * simd_cross(bp, cp).z,
+            bp_sq * simd_cross(cp, ap).z,
+            cp_sq * simd_cross(ap, bp).z
+        )
+        return simd_reduce_add(m) < 0
     }
     
     @inline(__always)
@@ -438,14 +592,17 @@ class Delaunator {
         let ab = b - a
         let ac = c - a
         
-        let bl = dot(ab, ab)
-        let cl = dot(ac, ac)
-        let d = 0.5 / (ab.x * ac.y - ab.y * ac.x)
+        let bl = simd_dot(ab, ab)
+        let cl = simd_dot(ac, ac)
         
-        let center = SIMD2<Double>(ac.y * bl - ab.y * cl,
-                                  ab.x * cl - ac.x * bl) * d
+        let d = 0.5 / simd_cross(ab, ac).z
         
-        return dot(center, center)
+        let center = SIMD2<Double>(
+            ac.y * bl - ab.y * cl,
+            ab.x * cl - ac.x * bl
+        ) * d
+        
+        return simd_dot(center, center)
     }
     
     @inline(__always)
@@ -453,81 +610,16 @@ class Delaunator {
         let ab = b - a
         let ac = c - a
         
-        let bl = dot(ab, ab)
-        let cl = dot(ac, ac)
-        let d = 0.5 / (ab.x * ac.y - ab.y * ac.x)
+        let bl = simd_dot(ab, ab)
+        let cl = simd_dot(ac, ac)
         
-        let coords = a + SIMD2<Double>(ac.y * bl - ab.y * cl,
-                                      ab.x * cl - ac.x * bl) * d
+        let d = 0.5 / simd_cross(ab, ac).z
+        
+        let coords = a + SIMD2<Double>(
+            ac.y * bl - ab.y * cl,
+            ab.x * cl - ac.x * bl
+        ) * d
         
         return Point(coords)
-    }
-    
-    
-    private func quicksort(ids: inout [UInt], dists: [Double],
-                           left: Int, right: Int) {
-        if right <= left {
-            return
-        }
-        
-        if right - left <= 20 {
-            // Insertion sort for small subarrays
-            for i in (left + 1)...right {
-                let temp = ids[i]
-                let tempDist = dists[Int(temp)]
-                var j = i - 1
-                while j >= left && dists[Int(ids[j])] > tempDist {
-                    ids[j + 1] = ids[j]
-                    j -= 1
-                }
-                ids[j + 1] = temp
-            }
-            return
-        }
-        
-        // Regular quicksort for larger arrays
-        let median = (left + right) >> 1
-        var i = left + 1
-        var j = right
-        
-        swap(arr: &ids, i: median, j: i)
-        
-        if dists[Int(ids[left])] > dists[Int(ids[right])] {
-            swap(arr: &ids, i: left, j: right)
-        }
-        if dists[Int(ids[i])] > dists[Int(ids[right])] {
-            swap(arr: &ids, i: i, j: right)
-        }
-        if dists[Int(ids[left])] > dists[Int(ids[i])] {
-            swap(arr: &ids, i: left, j: i)
-        }
-        
-        let temp = ids[i]
-        let tempDist = dists[Int(temp)]
-        
-        while true {
-            repeat { i += 1 } while i <= right && dists[Int(ids[i])] < tempDist
-            repeat { j -= 1 } while j >= left && dists[Int(ids[j])] > tempDist
-            if j < i { break }
-            swap(arr: &ids, i: i, j: j)
-        }
-        
-        ids[left + 1] = ids[j]
-        ids[j] = temp
-        
-        // Ensure the recursive calls have valid ranges
-        if j > left {
-            quicksort(ids: &ids, dists: dists, left: left, right: j - 1)
-        }
-        if j + 1 < right {
-            quicksort(ids: &ids, dists: dists, left: j + 1, right: right)
-        }
-    }
-    
-    @inline(__always)
-    private func swap(arr: inout [UInt], i: Int, j: Int) {
-        let tmp = arr[i]
-        arr[i] = arr[j]
-        arr[j] = tmp
     }
 }
