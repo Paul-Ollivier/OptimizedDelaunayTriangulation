@@ -1,94 +1,146 @@
 import SwiftUI
+import simd
 
+#if os(iOS)
+import UIKit
+typealias PlatformColor = UIColor
+#else
+import AppKit
+typealias PlatformColor = NSColor
+#endif
 
-@main
-struct DelaunatorApp: App {
-    var body: some Scene {
-        WindowGroup {
-            DelaunatorView()
+class TriangulationModel: ObservableObject {
+    @Published var points: [Point] = []
+    @Published var triangles: [UInt] = []
+    @Published var triangulationTime: TimeInterval = 0
+    @Published var pointCount: Int = 0
+    
+    let delaunator: CachedDelaunator
+    private let maxPoints = 1000
+    private var timer: Timer?
+    private let bounds: CGRect
+    
+    init(bounds: CGRect) {
+        self.bounds = bounds
+        self.delaunator = CachedDelaunator(maxPoints: maxPoints)
+        startAnimation()
+    }
+    
+    func startAnimation() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
+            self?.updatePoints()
+        }
+    }
+    
+    private func updatePoints() {
+        // Randomly choose number of points between 0 and maxPoints
+        pointCount = Int.random(in: 0...maxPoints)
+        
+        // Generate new random points
+        points = (0..<pointCount).map { _ in
+            Point(DPoint(
+                Double.random(in: bounds.minX...bounds.maxX),
+                Double.random(in: bounds.minY...bounds.maxY)
+            ))
+        }
+        
+        updateTriangulation()
+    }
+    
+    private func updateTriangulation() {
+        let startTime = CACurrentMediaTime()
+        delaunator.update(from: points)
+        let endTime = CACurrentMediaTime()
+        
+        triangulationTime = endTime - startTime
+        triangles = delaunator.triangles
+    }
+    
+    deinit {
+        timer?.invalidate()
+    }
+}
+
+struct TriangulationView: View {
+    @StateObject private var model: TriangulationModel
+    
+    init(bounds: CGRect) {
+        _model = StateObject(wrappedValue: TriangulationModel(bounds: bounds))
+    }
+    
+    var body: some View {
+        ZStack {
+            Canvas { context, size in
+                context.withCGContext { ctx in
+                    ctx.setStrokeColor(PlatformColor.white.cgColor)
+                    ctx.setLineWidth(0.5)
+                    
+                    for i in stride(from: 0, to: model.triangles.count, by: 3) {
+                        guard i + 2 < model.triangles.count else { break }
+                        
+                        let p1 = model.points[Int(model.triangles[i])].coords
+                        let p2 = model.points[Int(model.triangles[i + 1])].coords
+                        let p3 = model.points[Int(model.triangles[i + 2])].coords
+                        
+                        ctx.move(to: CGPoint(x: p1.x, y: p1.y))
+                        ctx.addLine(to: CGPoint(x: p2.x, y: p2.y))
+                        ctx.addLine(to: CGPoint(x: p3.x, y: p3.y))
+                        ctx.closePath()
+                    }
+                    ctx.strokePath()
+                    
+                    ctx.setFillColor(PlatformColor.red.cgColor)
+                    for point in model.points {
+                        let rect = CGRect(
+                            x: point.coords.x - 1,
+                            y: point.coords.y - 1,
+                            width: 2,
+                            height: 2
+                        )
+                        ctx.fillEllipse(in: rect)
+                    }
+                }
+            }
+            .background(Color.black)
+            .ignoresSafeArea()
+            
+            VStack {
+                Spacer()
+                VStack(spacing: 8) {
+                    Text("Points: \(model.pointCount)")
+                        .foregroundColor(.white)
+                        .font(.system(.title2, design: .monospaced))
+                    Text("Triangulation Time: \(String(format: "%.2f", model.triangulationTime * 1000)) ms")
+                        .foregroundColor(.white)
+                        .font(.system(.title2, design: .monospaced))
+                }
+                .padding()
+                .background(Color.black.opacity(0.7))
+                .cornerRadius(10)
+                .padding(.bottom)
+            }
         }
     }
 }
 
-
-struct DelaunatorView: View {
-    @State private var points: [Point] = []
-    @State private var triangles: [UInt] = []
-    @State private var lastExecutionTime: Double = 0
-    private let size: CGFloat = 600
-    private let pointCount = 10000
-    
+struct ContentView: View {
     var body: some View {
-        VStack {
-            Canvas { context, size in
-                // Draw triangles
-                for i in stride(from: 0, to: triangles.count, by: 3) {
-                    if i + 2 < triangles.count {
-                        let p1 = points[Int(triangles[i])]
-                        let p2 = points[Int(triangles[i + 1])]
-                        let p3 = points[Int(triangles[i + 2])]
-                        
-                        let path = Path { path in
-                            path.move(to: CGPoint(x: p1.coords.x, y: p1.coords.y))
-                            path.addLine(to: CGPoint(x: p2.coords.x, y: p2.coords.y))
-                            path.addLine(to: CGPoint(x: p3.coords.x, y: p3.coords.y))
-                            path.closeSubpath()
-                        }
-                        
-                        context.stroke(path, with: .color(.blue.opacity(0.5)), lineWidth: 0.5)
-                    }
-                }
-                
-                // Draw points
-                for point in points {
-                    let rect = CGRect(x: point.coords.x - 1, y: point.coords.y - 1, width: 2, height: 2)
-                    context.fill(Path(ellipseIn: rect), with: .color(.red.opacity(0.5)))
-                }
-            }
-            .frame(width: size, height: size)
-            .border(.gray, width: 1)
-            
-            Text("Points: \(pointCount)")
-                .padding(.top)
-            
-            Text("Triangulation time: \(String(format: "%.2f", lastExecutionTime)) ms")
-                .padding(.bottom)
-            
-            Button(action: generatePoints) {
-                Text("Generate New Points")
-                    .padding()
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-            }
-            .padding()
-        }
-        .onAppear {
-            generatePoints()
+        GeometryReader { geometry in
+            TriangulationView(bounds: CGRect(
+                x: 20,
+                y: 20,
+                width: geometry.size.width - 40,
+                height: geometry.size.height - 40
+            ))
         }
     }
-    
-    private func generatePoints() {
-        // Generate random points
-        var newPoints: [Point] = []
-        for _ in 0..<pointCount {
-            let coords = SIMD2<Double>(Double.random(in: 50..<(size-50)), Double.random(in: 50..<(size-50)))
-            newPoints.append(Point(coords))
+}
+
+@main
+struct DelaunayApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
         }
-        
-        // Measure triangulation time
-        let startTime = CFAbsoluteTimeGetCurrent()
-        
-        let delaunator = Delaunator.from(points: newPoints)
-        
-        let endTime = CFAbsoluteTimeGetCurrent()
-        lastExecutionTime = (endTime - startTime) * 1000 // Convert to milliseconds
-        
-        points = newPoints
-        triangles = delaunator.triangles
-        
-        print("Generated \(pointCount) points")
-        print("Number of triangles: \(triangles.count / 3)")
-        print("Triangulation time: \(String(format: "%.2f", lastExecutionTime)) ms")
     }
 }
