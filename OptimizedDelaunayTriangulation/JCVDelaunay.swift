@@ -72,8 +72,8 @@ struct JCVDelaunay {
     private var hashFactor: Double
     private var hullTri: [Int]
     private var hullPrev: [Int]
-    private var centre: SIMD2<Double>
     private var coords: [SIMD2<Double>]
+    private var centre: SIMD2<Double>
     var edgeStack: [Int]
     
     init(maxPoints: Int) {
@@ -82,11 +82,13 @@ struct JCVDelaunay {
         self.maxTriangles = max(2 * maxPoints - 5, 0)
         self.numberEdges = 0
         
-        // Preallocate capacity for triangles and halfEdges
-        self.triangles = [Int](repeating: 0, count: 3 * maxTriangles)
-        self.halfEdges = [Int](repeating: -1, count: 3 * maxTriangles)
+        // Preallocate triangles and halfEdges with exact sizes
+        self.triangles = [Int](repeating: 0, count: 0)
+        self.triangles.reserveCapacity(3 * maxTriangles)
+        self.halfEdges = [Int](repeating: -1, count: 0)
+        self.halfEdges.reserveCapacity(3 * maxTriangles)
         
-        // Preallocate hullTri and hullPrev
+        // Preallocate hullTri and hullPrev with exact sizes
         self.hullTri = [Int](repeating: -1, count: maxPoints)
         self.hullPrev = [Int](repeating: -1, count: maxPoints)
         self.coords = [SIMD2<Double>](repeating: SIMD2<Double>(0.0, 0.0), count: maxPoints)
@@ -97,11 +99,12 @@ struct JCVDelaunay {
         self.hullStart = 0
         self.hullSize = 0
         self.hull = []
+        self.hull.reserveCapacity(maxPoints) // Preallocate hull with maxPoints capacity
         self.centre = SIMD2<Double>(0.0, 0.0)
         
         // Initialize edgeStack and preallocate capacity
         self.edgeStack = [Int]()
-        self.edgeStack.reserveCapacity(512) // Initial capacity, adjust as needed
+        self.edgeStack.reserveCapacity(512) // Adjust as needed
     }
     
     mutating func triangulate(points: [Point]) {
@@ -120,15 +123,16 @@ struct JCVDelaunay {
         self.edgeStack.removeAll(keepingCapacity: true)
         
         // Reset hullTri and hullPrev arrays up to numberPoints
-        // Changed from maxPoints to numberPoints to avoid unnecessary operations
         for i in 0..<numberPoints {
             hullTri[i] = -1
             hullPrev[i] = -1
         }
         
-        // Reset triangles and halfEdges arrays
+        // Reset triangles and halfEdges arrays, reserve exact capacities
         triangles.removeAll(keepingCapacity: true)
+        triangles.reserveCapacity(3 * maxTriangles)
         halfEdges.removeAll(keepingCapacity: true)
+        halfEdges.reserveCapacity(3 * maxTriangles)
         
         // Populate coords array
         for i in 0..<numberPoints {
@@ -139,19 +143,19 @@ struct JCVDelaunay {
             return
         }
         
+        // Preallocate arrays with exact sizes
         var hullNext = [Int](repeating: -1, count: numberPoints)
         var hullHash = [Int](repeating: -1, count: hashSize)
-        
         var dists = [Double](repeating: 0.0, count: numberPoints)
         var ids = [Int](repeating: 0, count: numberPoints)
         
-        // Compute bounds and populate coords array
+        // Compute bounds
         var minX = Double.infinity
         var maxX = -Double.infinity
         var minY = Double.infinity
         var maxY = -Double.infinity
         
-        for (i, _) in points.enumerated() {
+        for i in 0..<numberPoints {
             let p = coords[i]
             if p.x < minX { minX = p.x }
             if p.y < minY { minY = p.y }
@@ -202,9 +206,11 @@ struct JCVDelaunay {
                 let deltaX = coords[i].x - coords[0].x
                 dists[i] = isNearZero(x: deltaX) ? coords[i].y - coords[0].y : deltaX
             }
+            // In-place sorting of 'ids' array
             ids.sort { dists[$0] < dists[$1] }
-            // Modify 'hull' in place to avoid creating a new array
+            // Preallocate hull with exact size
             hull.removeAll(keepingCapacity: true)
+            hull.reserveCapacity(numberPoints)
             hull.append(contentsOf: ids)
             triangles.removeAll(keepingCapacity: true)
             halfEdges.removeAll(keepingCapacity: true)
@@ -316,7 +322,7 @@ struct JCVDelaunay {
             hullHash[hashKey(p: coords[e])] = e
         }
         
-        // Modify 'hull' in place to avoid creating a new array
+        // Preallocate hull with exact size
         hull.removeAll(keepingCapacity: true)
         hull.reserveCapacity(hullSize)
         var e = hullStart
@@ -395,6 +401,11 @@ struct JCVDelaunay {
     
     private mutating func addTriangle(_ i0: Int, _ i1: Int, _ i2: Int, _ a: Int, _ b: Int, _ c: Int) -> Int {
         let t = triangles.count
+        // Ensure capacity before appending
+        if triangles.count + 3 > triangles.capacity {
+            triangles.reserveCapacity(triangles.capacity + 3 * maxTriangles)
+            halfEdges.reserveCapacity(halfEdges.capacity + 3 * maxTriangles)
+        }
         triangles.append(contentsOf: [i0, i1, i2])
         
         link(t, a)
