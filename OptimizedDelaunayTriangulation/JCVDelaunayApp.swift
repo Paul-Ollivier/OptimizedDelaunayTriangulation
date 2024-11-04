@@ -20,7 +20,7 @@ struct ContentView: View {
     
     @State private var delaunay = JCVDelaunay(maxPoints: 1000) // Initialize once and reuse
     
-    private let frameRate = 30.0 // Target 30 FPS
+    private let frameRate = 60.0 // Target 30 FPS
     
     var body: some View {
         VStack {
