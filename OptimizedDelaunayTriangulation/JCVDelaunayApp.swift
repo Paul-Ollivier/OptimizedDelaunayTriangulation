@@ -58,7 +58,7 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.white)
+            .background(.black)
             
             // Display number of points and triangulation time
             Text("n points: \(numPoints) - triangulation time: \(String(format: "%.2f", triangulationTime)) ms")

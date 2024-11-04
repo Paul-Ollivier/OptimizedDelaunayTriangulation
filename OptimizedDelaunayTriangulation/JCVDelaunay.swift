@@ -1,14 +1,6 @@
 import SwiftUI
 import simd
 
-// MARK: - Static Constants
-
-struct Static {
-    static let Epsilon: Double = pow(2.0, -53)
-    static let orientThreshold: Double = (3.0 + 16.0 * Epsilon) * Epsilon
-    static let circleThreshold: Double = (10.0 + 96.0 * Epsilon) * Epsilon
-}
-
 // MARK: - Point Struct
 
 struct Point: Hashable, Codable {
@@ -59,6 +51,9 @@ struct Triangulation: Hashable, Codable, Identifiable {
 // MARK: - JCVDelaunay Struct
 
 struct JCVDelaunay {
+    static let Epsilon: Double = pow(2.0, -53)
+    static let orientThreshold: Double = (3.0 + 16.0 * Epsilon) * Epsilon
+    static let circleThreshold: Double = (10.0 + 96.0 * Epsilon) * Epsilon
     var triangles: [Int]
     var halfEdges: [Int]
     var hull: [Int]
@@ -183,7 +178,7 @@ struct JCVDelaunay {
         for i in 0..<numberPoints {
             if i == i0 { continue }
             let d = distanceSquared(coords[i0], coords[i])
-            if d < minDist && d > Static.Epsilon {
+            if d < minDist && d > JCVDelaunay.Epsilon {
                 i1 = i
                 minDist = d
             }
@@ -442,7 +437,7 @@ struct JCVDelaunay {
         let permanent = (abs(bd.x * cd.y - bd.y * cd.x) + abs(cd.x * ad.y - cd.y * ad.x)) * alift
                       + (abs(cd.x * ad.y - cd.y * ad.x) + abs(ad.x * bd.y - ad.y * bd.x)) * blift
                       + (abs(ad.x * bd.y - ad.y * bd.x) + abs(bd.x * cd.y - bd.y * cd.x)) * clift
-        let errbound = Static.circleThreshold * permanent
+        let errbound = JCVDelaunay.circleThreshold * permanent
         return det < -errbound
     }
     
@@ -492,7 +487,7 @@ struct JCVDelaunay {
         let detLeft = (a.y - c.y) * (b.x - c.x)
         let detRight = (a.x - c.x) * (b.y - c.y)
         let det = detLeft - detRight
-        return abs(det) >= Static.orientThreshold * abs(detLeft + detRight) ? det : 0
+        return abs(det) >= JCVDelaunay.orientThreshold * abs(detLeft + detRight) ? det : 0
     }
     
     func orient(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>) -> Bool {
@@ -506,6 +501,6 @@ struct JCVDelaunay {
 
     @inline(__always)
     func isNearZero(x: Double) -> Bool {
-        return abs(x) <= Static.Epsilon
+        return abs(x) <= JCVDelaunay.Epsilon
     }
 }
