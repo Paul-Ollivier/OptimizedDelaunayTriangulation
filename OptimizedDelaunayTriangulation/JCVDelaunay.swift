@@ -1,11 +1,15 @@
-import Foundation
+import SwiftUI
 import simd
 
+// MARK: - Static Constants
+
 struct Static {
-    static var Epsilon: Double = pow(2.0, -53)
+    static let Epsilon: Double = pow(2.0, -53)
     static let orientThreshold: Double = (3.0 + 16.0 * Epsilon) * Epsilon
     static let circleThreshold: Double = (10.0 + 96.0 * Epsilon) * Epsilon
 }
+
+// MARK: - Point Struct
 
 struct Point: Hashable, Codable {
     var vector: SIMD2<Double>
@@ -25,6 +29,8 @@ struct Point: Hashable, Codable {
     }
 }
 
+// MARK: - Triangulation Struct
+
 struct Triangulation: Hashable, Codable, Identifiable {
     var points: [Point]
     var triangles: [Int]
@@ -34,28 +40,35 @@ struct Triangulation: Hashable, Codable, Identifiable {
     var id: UUID? = UUID()
 
     init(using delaunay: JCVDelaunay, with points: [Point]) {
-        triangles = delaunay.triangles
-        halfEdges = delaunay.halfEdges
-        hull = delaunay.hull
-        numberEdges = delaunay.numberEdges
+        self.triangles = delaunay.triangles
+        self.halfEdges = delaunay.halfEdges
+        self.hull = delaunay.hull
+        self.numberEdges = delaunay.numberEdges
         self.points = points
     }
 
     init() {
-        triangles = []
-        halfEdges = []
-        hull = []
-        points = []
-        numberEdges = 0
+        self.triangles = []
+        self.halfEdges = []
+        self.hull = []
+        self.points = []
+        self.numberEdges = 0
     }
 }
+
+// MARK: - JCVDelaunay Struct
 
 struct JCVDelaunay {
     var triangles: [Int]
     var halfEdges: [Int]
     var hull: [Int]
     var numberEdges: Int
-    private var numberPoints, maxTriangles, hashSize, hullStart, hullSize: Int
+    private var maxPoints: Int
+    private var numberPoints: Int
+    private var maxTriangles: Int
+    private var hashSize: Int
+    private var hullStart: Int
+    private var hullSize: Int
     private var hashFactor: Double
     private var hullTri: [Int]
     private var hullPrev: [Int]
@@ -63,42 +76,69 @@ struct JCVDelaunay {
     private var coords: [SIMD2<Double>]
     var edgeStack: [Int]
     
-    init(from points: [Point]) {
-        numberPoints = points.count
-        coords = [SIMD2<Double>](repeating: SIMD2<Double>(0.0, 0.0), count: numberPoints)
-        
-        // Arrays that will store the triangulation graph
-        maxTriangles = max(2 * numberPoints - 5, 0)
-        numberEdges = 0
+    init(maxPoints: Int) {
+        self.maxPoints = maxPoints
+        self.numberPoints = 0
+        self.maxTriangles = max(2 * maxPoints - 5, 0)
+        self.numberEdges = 0
         
         // Preallocate capacity for triangles and halfEdges
-        triangles = [Int]()
-        triangles.reserveCapacity(3 * maxTriangles)
-        
-        halfEdges = [Int]()
-        halfEdges.reserveCapacity(3 * maxTriangles)
+        self.triangles = [Int](repeating: 0, count: 3 * maxTriangles)
+        self.halfEdges = [Int](repeating: -1, count: 3 * maxTriangles)
         
         // Preallocate hullTri and hullPrev
-        hullTri = [Int](repeating: 0, count: numberPoints)
-        hullPrev = [Int](repeating: 0, count: numberPoints)
-        hull = [Int]() // Will reserve capacity after hullSize is known
+        self.hullTri = [Int](repeating: -1, count: maxPoints)
+        self.hullPrev = [Int](repeating: -1, count: maxPoints)
+        self.coords = [SIMD2<Double>](repeating: SIMD2<Double>(0.0, 0.0), count: maxPoints)
         
-        // Hash array for hull edges ordered by angle
-        hashFactor = Double(numberPoints).squareRoot().rounded(.up)
-        hashSize = Int(hashFactor)
-        hashFactor *= 0.25
-        
-        hullStart = 0
-        hullSize = 0
-        centre = SIMD2<Double>(0.0, 0.0)
+        // Hash array parameters
+        self.hashFactor = 0.0
+        self.hashSize = 0
+        self.hullStart = 0
+        self.hullSize = 0
+        self.hull = []
+        self.centre = SIMD2<Double>(0.0, 0.0)
         
         // Initialize edgeStack and preallocate capacity
-        edgeStack = [Int]()
-        edgeStack.reserveCapacity(512) // Initial capacity, adjust as needed
+        self.edgeStack = [Int]()
+        self.edgeStack.reserveCapacity(512) // Initial capacity, adjust as needed
+    }
+    
+    mutating func triangulate(points: [Point]) {
+        self.numberPoints = points.count
+        assert(numberPoints <= maxPoints, "Number of points exceeds maxPoints")
         
-        if numberPoints == 0 { return }
+        // Re-initialize variables that depend on numberPoints
+        self.numberEdges = 0
+        self.hull.removeAll(keepingCapacity: true)
+        self.hullSize = 0
+        self.hullStart = 0
+        self.hashFactor = Double(numberPoints).squareRoot().rounded(.up)
+        self.hashSize = Int(hashFactor)
+        self.hashFactor *= 0.25
+        self.centre = SIMD2<Double>(0.0, 0.0)
+        self.edgeStack.removeAll(keepingCapacity: true)
         
-        var hullNext = [Int](repeating: 0, count: numberPoints)
+        // Reset hullTri and hullPrev arrays up to maxPoints
+        for i in 0..<maxPoints {
+            hullTri[i] = -1
+            hullPrev[i] = -1
+        }
+        
+        // Reset triangles and halfEdges arrays
+        triangles.removeAll(keepingCapacity: true)
+        halfEdges.removeAll(keepingCapacity: true)
+        
+        // Populate coords array
+        for i in 0..<numberPoints {
+            coords[i] = points[i].vector
+        }
+        
+        if numberPoints == 0 {
+            return
+        }
+        
+        var hullNext = [Int](repeating: -1, count: numberPoints)
         var hullHash = [Int](repeating: -1, count: hashSize)
         
         var dists = [Double](repeating: 0.0, count: numberPoints)
@@ -110,8 +150,8 @@ struct JCVDelaunay {
         var minY = Double.infinity
         var maxY = -Double.infinity
         
-        for (i, p) in points.enumerated() {
-            coords[i] = p.vector
+        for (i, _) in points.enumerated() {
+            let p = coords[i]
             if p.x < minX { minX = p.x }
             if p.y < minY { minY = p.y }
             if p.x > maxX { maxX = p.x }
@@ -164,8 +204,8 @@ struct JCVDelaunay {
             ids.sort { dists[$0] < dists[$1] }
             hull = ids
             hull.removeLast(numberPoints - hull.count)
-            triangles = []
-            halfEdges = []
+            triangles.removeAll(keepingCapacity: true)
+            halfEdges.removeAll(keepingCapacity: true)
             return
         }
         
@@ -280,9 +320,7 @@ struct JCVDelaunay {
             e = hullNext[e]
         }
         
-        // Remove unused entries
-        triangles.removeLast(triangles.count - numberEdges)
-        halfEdges.removeLast(halfEdges.count - numberEdges)
+        // Triangles and halfEdges are already correct
     }
     
     private mutating func legalize(edge e: Int) -> Int {
@@ -354,15 +392,8 @@ struct JCVDelaunay {
     
     private mutating func addTriangle(_ i0: Int, _ i1: Int, _ i2: Int,
                                       _ a: Int, _ b: Int, _ c: Int) -> Int {
-        let t = numberEdges
-        
-        if t + 2 < triangles.count {
-            triangles[t] = i0
-            triangles[t + 1] = i1
-            triangles[t + 2] = i2
-        } else {
-            triangles.append(contentsOf: [i0, i1, i2])
-        }
+        let t = triangles.count
+        triangles.append(contentsOf: [i0, i1, i2])
         
         link(t, a)
         link(t + 1, b)
@@ -372,31 +403,7 @@ struct JCVDelaunay {
         return t
     }
     
-    func isDelaunay(edge a: Int) -> Bool {
-        let b = halfEdges[a]
-        if a > b {
-            return true
-        }
-        
-        let a0 = a - a % 3
-        let a1 = a0 + (a + 1) % 3
-        let a2 = a0 + (a + 2) % 3
-        
-        let b0 = b - b % 3
-        let b2 = b0 + (b + 2) % 3
-        
-        let n = triangles[a1]
-        let i = triangles[a2]
-        let q = triangles[a]
-        let p = triangles[b2]
-        
-        let firstTest = inCircumCircle(coords[n], coords[i], coords[q], coords[p])
-        let otherTest = inCircumCircle(coords[p], coords[n], coords[i], coords[q])
-        
-        return otherTest == firstTest ? true : !firstTest
-    }
-    
-    // SIMD-Optimized Functions
+    // MARK: - Geometry Functions
     
     @inline(__always)
     func distanceSquared(_ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double {
@@ -409,13 +416,13 @@ struct JCVDelaunay {
         let bd = b - p
         let cd = c - p
 
-        let alift = simd_length_squared(ad)
-        let blift = simd_length_squared(bd)
-        let clift = simd_length_squared(cd)
-
         let ab = ad.x * bd.y - ad.y * bd.x
         let bc = bd.x * cd.y - bd.y * cd.x
         let ca = cd.x * ad.y - cd.y * ad.x
+
+        let alift = simd_length_squared(ad)
+        let blift = simd_length_squared(bd)
+        let clift = simd_length_squared(cd)
 
         let det = alift * bc + blift * ca + clift * ab
 
@@ -484,41 +491,8 @@ struct JCVDelaunay {
         return det >= 0
     }
 
-    func getTriangleArea(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>) -> Double {
-        return 0.5 * orientIfSure(a, b, c)
-    }
-
     @inline(__always)
     func isNearZero(x: Double) -> Bool {
         return abs(x) <= Static.Epsilon
-    }
-
-    @inline(__always)
-    func isNear(x: Double, y: Double) -> Bool {
-        return abs(x - y) <= Static.Epsilon
-    }
-
-    func sum(x: [Double]) -> Double {
-        var sum = 0.0
-        var c = 0.0
-        for k in x {
-            let y = k - c
-            let t = sum + y
-            c = (t - sum) - y
-            sum = t
-        }
-        return sum
-    }
-    
-    func nextHalfEdge(edge e: Int) -> Int { (e % 3 == 2) ? e - 2 : e + 1 }
-    func prevHalfEdge(edge e: Int) -> Int { (e % 3 == 0) ? e + 2 : e - 1 }
-    
-    func edgesOf(triangle t: Int) -> [Int] { [3 * t, 3 * t + 1, 3 * t + 2] }
-    func triangleOf(edge e: Int) -> Int { e / 3 }
-    func pointsOf(triangle t: Int, using triangles: [Int]) -> [Int] { edgesOf(triangle: t).map { triangles[$0] } }
-    
-    func triangleCentre(triangle t: Int, using points: [Point], using triangles: [Int]) -> SIMD2<Double> {
-        let vertices: [SIMD2<Double>] = pointsOf(triangle: t, using: triangles).map { points[$0].vector }
-        return circumCentre(vertices[0], vertices[1], vertices[2])
     }
 }
