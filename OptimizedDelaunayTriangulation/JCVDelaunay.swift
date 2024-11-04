@@ -119,8 +119,9 @@ struct JCVDelaunay {
         self.centre = SIMD2<Double>(0.0, 0.0)
         self.edgeStack.removeAll(keepingCapacity: true)
         
-        // Reset hullTri and hullPrev arrays up to maxPoints
-        for i in 0..<maxPoints {
+        // Reset hullTri and hullPrev arrays up to numberPoints
+        // Changed from maxPoints to numberPoints to avoid unnecessary operations
+        for i in 0..<numberPoints {
             hullTri[i] = -1
             hullPrev[i] = -1
         }
@@ -202,8 +203,9 @@ struct JCVDelaunay {
                 dists[i] = isNearZero(x: deltaX) ? coords[i].y - coords[0].y : deltaX
             }
             ids.sort { dists[$0] < dists[$1] }
-            hull = ids
-            hull.removeLast(numberPoints - hull.count)
+            // Modify 'hull' in place to avoid creating a new array
+            hull.removeAll(keepingCapacity: true)
+            hull.append(contentsOf: ids)
             triangles.removeAll(keepingCapacity: true)
             halfEdges.removeAll(keepingCapacity: true)
             return
@@ -220,6 +222,7 @@ struct JCVDelaunay {
             dists[i] = distanceSquared(coords[i], centre)
         }
         
+        // In-place sorting of 'ids' array
         ids.sort { dists[$0] < dists[$1] }
         
         hullStart = i0
@@ -313,14 +316,14 @@ struct JCVDelaunay {
             hullHash[hashKey(p: coords[e])] = e
         }
         
-        hull = [Int](repeating: 0, count: hullSize)
+        // Modify 'hull' in place to avoid creating a new array
+        hull.removeAll(keepingCapacity: true)
+        hull.reserveCapacity(hullSize)
         var e = hullStart
-        for i in 0..<hullSize {
-            hull[i] = e
+        for _ in 0..<hullSize {
+            hull.append(e)
             e = hullNext[e]
         }
-        
-        // Triangles and halfEdges are already correct
     }
     
     private mutating func legalize(edge e: Int) -> Int {
@@ -390,8 +393,7 @@ struct JCVDelaunay {
         }
     }
     
-    private mutating func addTriangle(_ i0: Int, _ i1: Int, _ i2: Int,
-                                      _ a: Int, _ b: Int, _ c: Int) -> Int {
+    private mutating func addTriangle(_ i0: Int, _ i1: Int, _ i2: Int, _ a: Int, _ b: Int, _ c: Int) -> Int {
         let t = triangles.count
         triangles.append(contentsOf: [i0, i1, i2])
         
