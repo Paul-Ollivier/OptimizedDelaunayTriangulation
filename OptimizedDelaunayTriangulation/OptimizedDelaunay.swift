@@ -29,7 +29,7 @@ struct Triangulation: Hashable, Codable, Identifiable {
     var halfEdges: [Int]
     var hull: [Int]
     var numberOfEdges: Int
-    var id: UUID? = UUID()
+    var id: UUID = UUID()
     
     init(using delaunay: OptimizedDelaunay, with points: [Point]) {
         self.triangles = delaunay.triangles
@@ -54,6 +54,7 @@ struct OptimizedDelaunay {
     static let epsilon: Double = pow(2.0, -53)
     static let orientThreshold: Double = (3.0 + 16.0 * epsilon) * epsilon
     static let circleThreshold: Double = (10.0 + 96.0 * epsilon) * epsilon
+    
     var triangles: [Int]
     var halfEdges: [Int]
     var hull: [Int]
@@ -77,13 +78,16 @@ struct OptimizedDelaunay {
         self.maxTriangles = max(2 * maxPoints - 5, 0)
         self.numberOfEdges = 0
         
-        // Preallocate triangles and halfEdges with exact sizes
+        // Preallocate arrays with required capacity
         self.triangles = [Int]()
         self.triangles.reserveCapacity(3 * maxTriangles)
+        
         self.halfEdges = [Int]()
         self.halfEdges.reserveCapacity(3 * maxTriangles)
         
-        // Preallocate hullTriangles and hullPrevious with exact sizes
+        self.hull = [Int]()
+        self.hull.reserveCapacity(maxPoints)
+        
         self.hullTriangles = [Int](repeating: -1, count: maxPoints)
         self.hullPrevious = [Int](repeating: -1, count: maxPoints)
         self.coordinates = [SIMD2<Double>](repeating: SIMD2<Double>(0.0, 0.0), count: maxPoints)
@@ -93,20 +97,17 @@ struct OptimizedDelaunay {
         self.hashSize = 0
         self.hullStartIndex = 0
         self.hullSize = 0
-        self.hull = []
-        self.hull.reserveCapacity(maxPoints) // Preallocate hull with maxPoints capacity
         self.center = SIMD2<Double>(0.0, 0.0)
         
-        // Initialize edgeStack and preallocate capacity
         self.edgeStack = [Int]()
-        self.edgeStack.reserveCapacity(512) // Adjust as needed
+        self.edgeStack.reserveCapacity(512)
     }
     
     mutating func triangulate(points: [Point]) {
         self.numberOfPoints = points.count
         assert(numberOfPoints <= maxPoints, "Number of points exceeds maxPoints")
         
-        // Re-initialize variables that depend on numberOfPoints
+        // Reset variables that depend on numberOfPoints
         self.numberOfEdges = 0
         self.hull.removeAll(keepingCapacity: true)
         self.hullSize = 0
@@ -117,17 +118,13 @@ struct OptimizedDelaunay {
         self.center = SIMD2<Double>(0.0, 0.0)
         self.edgeStack.removeAll(keepingCapacity: true)
         
-        // Reset hullTriangles and hullPrevious arrays up to numberOfPoints
         for i in 0..<numberOfPoints {
             hullTriangles[i] = -1
             hullPrevious[i] = -1
         }
         
-        // Reset triangles and halfEdges arrays, reserve exact capacities
         triangles.removeAll(keepingCapacity: true)
-        triangles.reserveCapacity(3 * maxTriangles)
         halfEdges.removeAll(keepingCapacity: true)
-        halfEdges.reserveCapacity(3 * maxTriangles)
         
         // Populate coordinates array
         for i in 0..<numberOfPoints {
@@ -138,7 +135,7 @@ struct OptimizedDelaunay {
             return
         }
         
-        // Preallocate arrays with exact sizes
+        // Preallocate working arrays
         var hullNext = [Int](repeating: -1, count: numberOfPoints)
         var hullHash = [Int](repeating: -1, count: hashSize)
         var distances = [Double](repeating: 0.0, count: numberOfPoints)
@@ -152,10 +149,10 @@ struct OptimizedDelaunay {
         
         for i in 0..<numberOfPoints {
             let point = coordinates[i]
-            if point.x < minX { minX = point.x }
-            if point.y < minY { minY = point.y }
-            if point.x > maxX { maxX = point.x }
-            if point.y > maxY { maxY = point.y }
+            minX = min(minX, point.x)
+            minY = min(minY, point.y)
+            maxX = max(maxX, point.x)
+            maxY = max(maxY, point.y)
             pointIndices[i] = i
         }
         
