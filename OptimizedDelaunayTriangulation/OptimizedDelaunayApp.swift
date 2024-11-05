@@ -18,7 +18,7 @@ struct ContentView: View {
     @State private var triangulationTime: Double = 0.0  // Triangulation time in milliseconds
     @State private var numPoints: Int = 0               // Number of points generated each frame
     
-    @State private var delaunay = OptimizedDelaunay(maxPoints: 10000) // Initialize once and reuse
+    @State private var delaunay = OptimizedDelaunay(maxPoints: 1 << 13) // Initialize once and reuse
     
     private let frameRate = 1.0 // Target 30 FPS
     
@@ -49,7 +49,7 @@ struct ContentView: View {
     func generatePoints() {
         // Generate between 1 and 1000 random points
         // numPoints = Int.random(in: 1...1000)
-        numPoints = 10000
+        numPoints = 1 << 13
         points = (0..<numPoints).map { _ in
             Point(x: Double.random(in: 0...1), y: Double.random(in: 0...1))
         }
