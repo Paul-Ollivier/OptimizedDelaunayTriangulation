@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		E28A719D2CCE9E9E002C6452 /* JCVDelaunay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = JCVDelaunay.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E28A719D2CCE9E9E002C6452 /* OptimizedDelaunay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OptimizedDelaunay.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -40,7 +40,7 @@
 		E28A719E2CCE9E9E002C6452 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				E28A719D2CCE9E9E002C6452 /* JCVDelaunay.app */,
+				E28A719D2CCE9E9E002C6452 /* OptimizedDelaunay.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,9 +48,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		E28A719C2CCE9E9E002C6452 /* JCVDelaunay */ = {
+		E28A719C2CCE9E9E002C6452 /* OptimizedDelaunay */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = E28A71AC2CCE9EA1002C6452 /* Build configuration list for PBXNativeTarget "JCVDelaunay" */;
+			buildConfigurationList = E28A71AC2CCE9EA1002C6452 /* Build configuration list for PBXNativeTarget "OptimizedDelaunay" */;
 			buildPhases = (
 				E28A71992CCE9E9E002C6452 /* Sources */,
 				E28A719A2CCE9E9E002C6452 /* Frameworks */,
@@ -63,11 +63,11 @@
 			fileSystemSynchronizedGroups = (
 				E28A719F2CCE9E9E002C6452 /* OptimizedDelaunayTriangulation */,
 			);
-			name = JCVDelaunay;
+			name = OptimizedDelaunay;
 			packageProductDependencies = (
 			);
 			productName = OptimizedDelaunayTriangulation;
-			productReference = E28A719D2CCE9E9E002C6452 /* JCVDelaunay.app */;
+			productReference = E28A719D2CCE9E9E002C6452 /* OptimizedDelaunay.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -85,7 +85,7 @@
 					};
 				};
 			};
-			buildConfigurationList = E28A71982CCE9E9E002C6452 /* Build configuration list for PBXProject "JCVDelaunay" */;
+			buildConfigurationList = E28A71982CCE9E9E002C6452 /* Build configuration list for PBXProject "OptimizedDelaunay" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -99,7 +99,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				E28A719C2CCE9E9E002C6452 /* JCVDelaunay */,
+				E28A719C2CCE9E9E002C6452 /* OptimizedDelaunay */,
 			);
 		};
 /* End PBXProject section */
@@ -246,11 +246,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = OptimizedDelaunayTriangulation/OptimizedDelaunayTriangulation.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"OptimizedDelaunayTriangulation/Preview Content\"";
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 4R853JL9LW;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -288,11 +287,10 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = OptimizedDelaunayTriangulation/OptimizedDelaunayTriangulation.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"OptimizedDelaunayTriangulation/Preview Content\"";
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = 4R853JL9LW;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -326,7 +324,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		E28A71982CCE9E9E002C6452 /* Build configuration list for PBXProject "JCVDelaunay" */ = {
+		E28A71982CCE9E9E002C6452 /* Build configuration list for PBXProject "OptimizedDelaunay" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				E28A71AA2CCE9EA1002C6452 /* Debug */,
@@ -335,7 +333,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		E28A71AC2CCE9EA1002C6452 /* Build configuration list for PBXNativeTarget "JCVDelaunay" */ = {
+		E28A71AC2CCE9EA1002C6452 /* Build configuration list for PBXNativeTarget "OptimizedDelaunay" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				E28A71AD2CCE9EA1002C6452 /* Debug */,

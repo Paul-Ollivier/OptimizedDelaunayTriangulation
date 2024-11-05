@@ -31,7 +31,7 @@ struct Triangulation: Hashable, Codable, Identifiable {
     var numberOfEdges: Int
     var id: UUID? = UUID()
     
-    init(using delaunay: JCVDelaunay, with points: [Point]) {
+    init(using delaunay: OptimizedDelaunay, with points: [Point]) {
         self.triangles = delaunay.triangles
         self.halfEdges = delaunay.halfEdges
         self.hull = delaunay.hull
@@ -50,7 +50,7 @@ struct Triangulation: Hashable, Codable, Identifiable {
 
 // MARK: - JCVDelaunay Struct
 
-struct JCVDelaunay {
+struct OptimizedDelaunay {
     static let epsilon: Double = pow(2.0, -53)
     static let orientThreshold: Double = (3.0 + 16.0 * epsilon) * epsilon
     static let circleThreshold: Double = (10.0 + 96.0 * epsilon) * epsilon
@@ -178,7 +178,7 @@ struct JCVDelaunay {
         for i in 0..<numberOfPoints {
             if i == seedIndex0 { continue }
             let distance = distanceSquared(coordinates[seedIndex0], coordinates[i])
-            if distance < minimumDistance && distance > JCVDelaunay.epsilon {
+            if distance < minimumDistance && distance > OptimizedDelaunay.epsilon {
                 seedIndex1 = i
                 minimumDistance = distance
             }
@@ -437,7 +437,7 @@ struct JCVDelaunay {
         let permanent = (abs(bd.x * cd.y - bd.y * cd.x) + abs(cd.x * ad.y - cd.y * ad.x)) * alift
                       + (abs(cd.x * ad.y - cd.y * ad.x) + abs(ad.x * bd.y - ad.y * bd.x)) * blift
                       + (abs(ad.x * bd.y - ad.y * bd.x) + abs(bd.x * cd.y - bd.y * cd.x)) * clift
-        let errorBound = JCVDelaunay.circleThreshold * permanent
+        let errorBound = OptimizedDelaunay.circleThreshold * permanent
         return determinant < -errorBound
     }
     
@@ -487,7 +487,7 @@ struct JCVDelaunay {
         let detLeft = (a.y - c.y) * (b.x - c.x)
         let detRight = (a.x - c.x) * (b.y - c.y)
         let determinant = detLeft - detRight
-        return abs(determinant) >= JCVDelaunay.orientThreshold * abs(detLeft + detRight) ? determinant : 0
+        return abs(determinant) >= OptimizedDelaunay.orientThreshold * abs(detLeft + detRight) ? determinant : 0
     }
     
     func orient(_ a: SIMD2<Double>, _ b: SIMD2<Double>, _ c: SIMD2<Double>) -> Bool {
@@ -501,6 +501,6 @@ struct JCVDelaunay {
 
     @inline(__always)
     func isNearZero(x: Double) -> Bool {
-        return abs(x) <= JCVDelaunay.epsilon
+        return abs(x) <= OptimizedDelaunay.epsilon
     }
 }

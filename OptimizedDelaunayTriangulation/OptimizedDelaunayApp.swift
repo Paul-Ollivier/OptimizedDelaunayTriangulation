@@ -18,7 +18,7 @@ struct ContentView: View {
     @State private var triangulationTime: Double = 0.0  // Triangulation time in milliseconds
     @State private var numPoints: Int = 0               // Number of points generated each frame
     
-    @State private var delaunay = JCVDelaunay(maxPoints: 1000) // Initialize once and reuse
+    @State private var delaunay = OptimizedDelaunay(maxPoints: 1000) // Initialize once and reuse
     
     private let frameRate = 60.0 // Target 30 FPS
     
