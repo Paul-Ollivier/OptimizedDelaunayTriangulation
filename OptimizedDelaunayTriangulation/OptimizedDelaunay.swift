@@ -50,7 +50,7 @@ struct Triangulation: Hashable, Codable, Identifiable {
 
 // MARK: - JCVDelaunay Struct
 
-struct OptimizedDelaunay {
+final class OptimizedDelaunay {
     static let epsilon: Double = pow(2.0, -53)
     static let orientThreshold: Double = (3.0 + 16.0 * epsilon) * epsilon
     static let circleThreshold: Double = (10.0 + 96.0 * epsilon) * epsilon
@@ -103,7 +103,7 @@ struct OptimizedDelaunay {
         self.edgeStack.reserveCapacity(512)
     }
     
-    mutating func triangulate(points: [Point]) {
+    func triangulate(points: [Point]) {
         self.numberOfPoints = points.count
         assert(numberOfPoints <= maxPoints, "Number of points exceeds maxPoints")
         
@@ -340,7 +340,7 @@ struct OptimizedDelaunay {
     }
 
     
-    private mutating func legalize(edge edgeIndex: Int) -> Int {
+    private func legalize(edge edgeIndex: Int) -> Int {
         var a = edgeIndex, a2 = 0
         
         flipEdge: while true {
@@ -392,7 +392,7 @@ struct OptimizedDelaunay {
         return Int(hashFactor * pseudoAngle(point - center).rounded(.down)) % hashSize
     }
     
-    private mutating func linkEdges(_ a: Int, _ b: Int) {
+    private func linkEdges(_ a: Int, _ b: Int) {
         if a < halfEdges.count {
             halfEdges[a] = b
         } else {
@@ -407,7 +407,7 @@ struct OptimizedDelaunay {
         }
     }
     
-    private mutating func addTriangle(_ index0: Int, _ index1: Int, _ index2: Int, _ edgeA: Int, _ edgeB: Int, _ edgeC: Int) -> Int {
+    private func addTriangle(_ index0: Int, _ index1: Int, _ index2: Int, _ edgeA: Int, _ edgeB: Int, _ edgeC: Int) -> Int {
         let triangleIndex = triangles.count
         // Ensure capacity before appending
         if triangles.count + 3 > triangles.capacity {
