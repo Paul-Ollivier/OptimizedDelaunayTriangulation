@@ -107,7 +107,6 @@ struct OptimizedDelaunay {
         self.numberOfPoints = points.count
         assert(numberOfPoints <= maxPoints, "Number of points exceeds maxPoints")
         
-        // Reset variables that depend on numberOfPoints
         self.numberOfEdges = 0
         self.hull.removeAll(keepingCapacity: true)
         self.hullSize = 0
@@ -135,7 +134,6 @@ struct OptimizedDelaunay {
             return
         }
         
-        // Preallocate working arrays
         var hullNext = [Int](repeating: -1, count: numberOfPoints)
         var hullHash = [Int](repeating: -1, count: hashSize)
         var distances = [Double](repeating: 0.0, count: numberOfPoints)
@@ -156,11 +154,11 @@ struct OptimizedDelaunay {
             pointIndices[i] = i
         }
         
-        // Find seed points
+        // Compute the center point of the bounding box
         let centerPoint = SIMD2<Double>(0.5 * (minX + maxX), 0.5 * (minY + maxY))
         
-        var seedIndex0 = 0, seedIndex1 = 0, seedIndex2 = 0
-        
+        // Find the seed point closest to the center of the bounding box
+        var seedIndex0 = 0
         var minimumDistance = Double.infinity
         for i in 0..<numberOfPoints {
             let distance = distanceSquared(coordinates[i], centerPoint)
@@ -169,28 +167,34 @@ struct OptimizedDelaunay {
                 minimumDistance = distance
             }
         }
-        let seedPoint0 = coordinates[seedIndex0]
         
+        let seedPoint0 = coordinates[seedIndex0]
+        var seedIndex1 = 0, seedIndex2 = 0
         minimumDistance = Double.infinity
+        
+        // Find the second seed point
         for i in 0..<numberOfPoints {
             if i == seedIndex0 { continue }
-            let distance = distanceSquared(coordinates[seedIndex0], coordinates[i])
+            let distance = distanceSquared(seedPoint0, coordinates[i])
             if distance < minimumDistance && distance > OptimizedDelaunay.epsilon {
                 seedIndex1 = i
                 minimumDistance = distance
             }
         }
-        var seedPoint1 = coordinates[seedIndex1]
         
+        var seedPoint1 = coordinates[seedIndex1]
         var minimumRadius = Double.infinity
+        
+        // Find the third seed point
         for i in 0..<numberOfPoints {
             if i == seedIndex0 || i == seedIndex1 { continue }
-            let radius = circumRadius(coordinates[seedIndex0], coordinates[seedIndex1], coordinates[i])
+            let radius = circumRadius(seedPoint0, seedPoint1, coordinates[i])
             if radius < minimumRadius {
                 seedIndex2 = i
                 minimumRadius = radius
             }
         }
+        
         var seedPoint2 = coordinates[seedIndex2]
         
         if minimumRadius == Double.infinity {
@@ -198,9 +202,7 @@ struct OptimizedDelaunay {
                 let deltaX = coordinates[i].x - coordinates[0].x
                 distances[i] = isNearZero(x: deltaX) ? coordinates[i].y - coordinates[0].y : deltaX
             }
-            // In-place sorting of 'pointIndices' array
             pointIndices.sort { distances[$0] < distances[$1] }
-            // Preallocate hull with exact size
             hull.removeAll(keepingCapacity: true)
             hull.reserveCapacity(numberOfPoints)
             hull.append(contentsOf: pointIndices)
@@ -214,13 +216,12 @@ struct OptimizedDelaunay {
             (seedPoint1, seedPoint2) = (seedPoint2, seedPoint1)
         }
         
-        center = circumCenter(coordinates[seedIndex0], coordinates[seedIndex1], coordinates[seedIndex2])
+        center = circumCenter(seedPoint0, seedPoint1, seedPoint2)
         
         for i in 0..<numberOfPoints {
             distances[i] = distanceSquared(coordinates[i], center)
         }
         
-        // In-place sorting of 'pointIndices' array
         pointIndices.sort { distances[$0] < distances[$1] }
         
         hullStartIndex = seedIndex0
@@ -234,25 +235,41 @@ struct OptimizedDelaunay {
         hullTriangles[seedIndex1] = 1
         hullTriangles[seedIndex2] = 2
         
-        hullHash[hashKey(point: coordinates[seedIndex0])] = seedIndex0
-        hullHash[hashKey(point: coordinates[seedIndex1])] = seedIndex1
-        hullHash[hashKey(point: coordinates[seedIndex2])] = seedIndex2
+        hullHash[hashKey(point: seedPoint0)] = seedIndex0
+        hullHash[hashKey(point: seedPoint1)] = seedIndex1
+        hullHash[hashKey(point: seedPoint2)] = seedIndex2
         
         _ = addTriangle(seedIndex0, seedIndex1, seedIndex2, -1, -1, -1)
         
-        var previousX: Double = 0, previousY: Double = 0
+        // Optimized Hull Loop
+        var previousX: Double = 0
+        var previousY: Double = 0
+        var cachedDifferenceX: Double = 0
+        var cachedDifferenceY: Double = 0
         
         for (order, currentIndex) in pointIndices.enumerated() {
             let currentPoint = coordinates[currentIndex]
             let currentX = currentPoint.x
             let currentY = currentPoint.y
             
-            if order > 0 && isNearZero(x: currentX - previousX) && isNearZero(x: currentY - previousY) { continue }
+            // Compute and cache the differences only once per iteration
+            if order > 0 {
+                cachedDifferenceX = currentX - previousX
+                cachedDifferenceY = currentY - previousY
+            }
             
+            // Skip this point if it’s too close to the previous one
+            if order > 0 && isNearZero(x: cachedDifferenceX) && isNearZero(x: cachedDifferenceY) {
+                continue
+            }
+            
+            // Update previous point values
             previousX = currentX
             previousY = currentY
             
-            if currentIndex == seedIndex0 || currentIndex == seedIndex1 || currentIndex == seedIndex2 { continue }
+            if currentIndex == seedIndex0 || currentIndex == seedIndex1 || currentIndex == seedIndex2 {
+                continue
+            }
             
             var startIndex = 0
             let key = hashKey(point: currentPoint)
@@ -283,7 +300,6 @@ struct OptimizedDelaunay {
             hullIndex = hullNext[hullIndex]
             
             while orient(currentPoint, coordinates[hullIndex], coordinates[nextHullIndex]) {
-                
                 triangleIndex = addTriangle(nextHullIndex, currentIndex, hullIndex, hullTriangles[currentIndex], -1, hullTriangles[nextHullIndex])
                 hullTriangles[currentIndex] = legalize(edge: triangleIndex + 2)
                 hullNext[nextHullIndex] = nextHullIndex
@@ -295,7 +311,6 @@ struct OptimizedDelaunay {
             if edgeIndex == startIndex {
                 hullIndex = hullPrevious[edgeIndex]
                 while orient(currentPoint, coordinates[edgeIndex], coordinates[hullIndex]) {
-                    
                     triangleIndex = addTriangle(hullIndex, currentIndex, edgeIndex, -1, hullTriangles[edgeIndex], hullTriangles[hullIndex])
                     _ = legalize(edge: triangleIndex + 2)
                     hullTriangles[hullIndex] = triangleIndex
@@ -314,7 +329,7 @@ struct OptimizedDelaunay {
             hullHash[hashKey(point: coordinates[edgeIndex])] = edgeIndex
         }
         
-        // Preallocate hull with exact size
+        // Final hull creation
         hull.removeAll(keepingCapacity: true)
         hull.reserveCapacity(hullSize)
         var edgeIndex = hullStartIndex
@@ -323,6 +338,7 @@ struct OptimizedDelaunay {
             edgeIndex = hullNext[edgeIndex]
         }
     }
+
     
     private mutating func legalize(edge edgeIndex: Int) -> Int {
         var a = edgeIndex, a2 = 0
