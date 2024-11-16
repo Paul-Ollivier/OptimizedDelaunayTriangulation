@@ -17,7 +17,7 @@ struct Point: Hashable, Codable {
     }
     
     init(x: Double, y: Double) {
-        self.vector = SIMD2<Double>(x, y)
+        vector = SIMD2<Double>(x, y)
     }
 }
 
@@ -32,19 +32,19 @@ struct Triangulation: Hashable, Codable, Identifiable {
     var id: UUID = UUID()
     
     init(using delaunay: OptimizedDelaunay, with points: [Point]) {
-        self.triangles = delaunay.triangles
-        self.halfEdges = delaunay.halfEdges
-        self.hull = delaunay.hull
-        self.numberOfEdges = delaunay.numberOfEdges
+        triangles = delaunay.triangles
+        halfEdges = delaunay.halfEdges
+        hull = delaunay.hull
+        numberOfEdges = delaunay.numberOfEdges
         self.points = points
     }
     
     init() {
-        self.triangles = []
-        self.halfEdges = []
-        self.hull = []
-        self.points = []
-        self.numberOfEdges = 0
+        triangles = []
+        halfEdges = []
+        hull = []
+        points = []
+        numberOfEdges = 0
     }
 }
 
@@ -74,48 +74,48 @@ final class OptimizedDelaunay {
     
     init(maxPoints: Int) {
         self.maxPoints = maxPoints
-        self.numberOfPoints = 0
-        self.maxTriangles = max(2 * maxPoints - 5, 0)
-        self.numberOfEdges = 0
+        numberOfPoints = 0
+        maxTriangles = max(2 * maxPoints - 5, 0)
+        numberOfEdges = 0
         
         // Preallocate arrays with required capacity
-        self.triangles = [Int]()
-        self.triangles.reserveCapacity(3 * maxTriangles)
+        triangles = [Int]()
+        triangles.reserveCapacity(3 * maxTriangles)
         
-        self.halfEdges = [Int]()
-        self.halfEdges.reserveCapacity(3 * maxTriangles)
+        halfEdges = [Int]()
+        halfEdges.reserveCapacity(3 * maxTriangles)
         
-        self.hull = [Int]()
-        self.hull.reserveCapacity(maxPoints)
+        hull = [Int]()
+        hull.reserveCapacity(maxPoints)
         
-        self.hullTriangles = [Int](repeating: -1, count: maxPoints)
-        self.hullPrevious = [Int](repeating: -1, count: maxPoints)
-        self.coordinates = [SIMD2<Double>](repeating: SIMD2<Double>(0.0, 0.0), count: maxPoints)
+        hullTriangles = [Int](repeating: -1, count: maxPoints)
+        hullPrevious = [Int](repeating: -1, count: maxPoints)
+        coordinates = [SIMD2<Double>](repeating: SIMD2<Double>(0.0, 0.0), count: maxPoints)
         
         // Hash array parameters
-        self.hashFactor = 0.0
-        self.hashSize = 0
-        self.hullStartIndex = 0
-        self.hullSize = 0
-        self.center = SIMD2<Double>(0.0, 0.0)
+        hashFactor = 0.0
+        hashSize = 0
+        hullStartIndex = 0
+        hullSize = 0
+        center = SIMD2<Double>(0.0, 0.0)
         
-        self.edgeStack = [Int]()
-        self.edgeStack.reserveCapacity(512)
+        edgeStack = [Int]()
+        edgeStack.reserveCapacity(512)
     }
     
     func triangulate(points: [Point]) {
-        self.numberOfPoints = points.count
+        numberOfPoints = points.count
         assert(numberOfPoints <= maxPoints, "Number of points exceeds maxPoints")
         
-        self.numberOfEdges = 0
-        self.hull.removeAll(keepingCapacity: true)
-        self.hullSize = 0
-        self.hullStartIndex = 0
-        self.hashFactor = Double(numberOfPoints).squareRoot().rounded(.up)
-        self.hashSize = Int(hashFactor)
-        self.hashFactor *= 0.25
-        self.center = SIMD2<Double>(0.0, 0.0)
-        self.edgeStack.removeAll(keepingCapacity: true)
+        numberOfEdges = 0
+        hull.removeAll(keepingCapacity: true)
+        hullSize = 0
+        hullStartIndex = 0
+        hashFactor = Double(numberOfPoints).squareRoot().rounded(.up)
+        hashSize = Int(hashFactor)
+        hashFactor *= 0.25
+        center = SIMD2<Double>(0.0, 0.0)
+        edgeStack.removeAll(keepingCapacity: true)
         
         for i in 0..<numberOfPoints {
             hullTriangles[i] = -1
