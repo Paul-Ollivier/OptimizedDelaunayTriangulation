@@ -13,14 +13,17 @@ struct TriangulationApp: App {
 
 
 struct ContentView: View {
+    
+    private static let MAX_POINTS = 1 << 11
+    
     @State private var points: [Point] = []
     @State private var triangulation: Triangulation = Triangulation()
     @State private var triangulationTime: Double = 0.0  // Triangulation time in milliseconds
     @State private var numPoints: Int = 0               // Number of points generated each frame
     
-    @State private var delaunay = OptimizedDelaunay(maxPoints: 1 << 13) // Initialize once and reuse
+    @State private var delaunay = OptimizedDelaunay(maxPoints: MAX_POINTS) // Initialize once and reuse
     
-    private let frameRate = 1.0 // Target 30 FPS
+    private let frameRate = 30.0 // Target 30 FPS
     
     var body: some View {
         VStack {
@@ -47,9 +50,8 @@ struct ContentView: View {
     }
     
     func generatePoints() {
-        // Generate between 1 and 1000 random points
-        // numPoints = Int.random(in: 1...1000)
-        numPoints = 1 << 13
+        // numPoints = Int.random(in: 1...ContentView.MAX_POINTS)
+        numPoints = ContentView.MAX_POINTS
         points = (0..<numPoints).map { _ in
             Point(x: Double.random(in: 0...1), y: Double.random(in: 0...1))
         }
@@ -82,7 +84,7 @@ struct MetalView: NSViewRepresentable {
         let mtkView = MTKView()
         mtkView.device = MTLCreateSystemDefaultDevice()
         mtkView.delegate = context.coordinator
-        mtkView.preferredFramesPerSecond = 60
+        mtkView.preferredFramesPerSecond = 30
         mtkView.enableSetNeedsDisplay = false
         mtkView.framebufferOnly = false
         mtkView.colorPixelFormat = .rgba8Unorm // Set pixel format to RGBA
