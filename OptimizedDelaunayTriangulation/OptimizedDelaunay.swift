@@ -48,7 +48,6 @@ struct Triangulation: Hashable, Codable, Identifiable {
     }
 }
 
-// MARK: - JCVDelaunay Struct
 
 final class OptimizedDelaunay {
     static let epsilon: Double = pow(2.0, -53)
@@ -59,6 +58,7 @@ final class OptimizedDelaunay {
     var halfEdges: [Int]
     var hull: [Int]
     var numberOfEdges: Int
+    
     private var maxPoints: Int
     private var numberOfPoints: Int
     private var maxTriangles: Int
@@ -73,6 +73,9 @@ final class OptimizedDelaunay {
     private var edgeStack: [Int]
     
     init(maxPoints: Int) {
+        
+        print("OptimizedDelaunay :: init | maxPoints:", maxPoints)
+        
         self.maxPoints = maxPoints
         numberOfPoints = 0
         maxTriangles = max(2 * maxPoints - 5, 0)
@@ -107,6 +110,10 @@ final class OptimizedDelaunay {
         numberOfPoints = points.count
         assert(numberOfPoints <= maxPoints, "Number of points exceeds maxPoints")
         
+        if numberOfPoints < 3 {
+            return
+        }
+        
         numberOfEdges = 0
         hull.removeAll(keepingCapacity: true)
         hullSize = 0
@@ -128,10 +135,6 @@ final class OptimizedDelaunay {
         // Populate coordinates array
         for i in 0..<numberOfPoints {
             coordinates[i] = points[i].vector
-        }
-        
-        if numberOfPoints == 0 {
-            return
         }
         
         var hullNext = [Int](repeating: -1, count: numberOfPoints)
